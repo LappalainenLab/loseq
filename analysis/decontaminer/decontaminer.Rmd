@@ -1,0 +1,217 @@
+---
+title: "Decontaminer plotting"
+author: "Molly Martorella"
+date: "6/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(patchwork)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+df_summary_path <- "analysis/decontaminer/species_plotting-corr_median-iqr.txt"
+prop_path <- "analysis/decontaminer/statsread_plot_numreads.txt"
+
+out_path <- "analysis/decontaminer/"
+fig_path <- here::here("analysis/decontaminer/figs/decontaminer_")
+```
+
+# Functions
+
+```{r}
+source(here::here("src/base_functions.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here::here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here::here(meta_seq_path), data.table = FALSE)
+
+df_summary <- fread(here::here(df_summary_path), data.table = FALSE)
+prop <- fread(here::here(prop_path), data.table = FALSE)
+
+source(here::here("src/gtex_loseq_colors.R"))
+
+tis <- c("buccal", "hair", "saliva", "urine")
+```
+
+# Plots
+
+# Median and IQR
+
+```{r}
+lab_colors<-ifelse(levels(factor(df_summary$species_name)) == 'M. restricta', '#DAA520', 'black')
+lab_colors<-lab_colors[-11]
+lab_colors[1:2]<-"#1E90FF"
+lab_colors[6:8]<-"#F08080"
+lab_colors[17:length(lab_colors)]<-"#F08080"
+
+df_summary %>% 
+  filter(!species_name == "Human endogenous retrovirus") %>%
+  mutate(tissue = factor(tissue, levels = c("hair", "buccal", "saliva", "urine"))) %>% 
+  ggplot(aes(x = species_name, y = median, fill=tissue)) +
+  facet_grid(tissue ~.) + #, scales = "free_y"
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin=firstq, ymax=thirdq), width=.2) +
+  scale_fill_manual(values = myColors[tis]) +
+  #theme(legend.position= "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3)) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=90)) +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 12),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_text(vjust = -0.75),
+        axis.text.y = element_text(size = 8),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12), 
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 10, angle = 90, hjust = 1, vjust = 0.3, face = "italic", colour=lab_colors),
+        legend.position= "none", 
+        panel.grid.major = element_line(size = 0.1),
+        panel.grid.minor = element_blank()) +
+  xlab("") +
+  ylab("Median and IQR")
+
+ggsave(filename = paste0(fig_path, "median_iqr.png"), height = 6, width = 6)
+```
+
+
+```{r}
+mqr <- df_summary %>% 
+  filter(!species_name == "Human endogenous retrovirus") %>%
+  mutate(tissue = factor(tissue, levels = c("hair", "buccal", "saliva", "urine"))) %>% 
+  ggplot(aes(x = species_name, y = median, fill=tissue)) +
+  facet_grid(tissue ~.) + #, scales = "free_y"
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin=firstq, ymax=thirdq), width=.2) +
+  scale_fill_manual(values = myColors[tis]) +
+  scale_y_continuous(breaks = seq(0,0.25,0.1)) +
+  #theme(legend.position= "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3)) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=90)) +
+  theme(plot.title = element_text(size = 10),
+        plot.subtitle = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_text(vjust = -0.75),
+        axis.text.y = element_text(size = 6),
+        strip.text = element_text(size = 7),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 7), 
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 8, angle = 90, hjust = 1, vjust = 0.3, face = "italic", colour=lab_colors),
+        legend.position= "none", 
+        panel.grid.major = element_line(size = 0.1),
+        panel.grid.minor = element_blank()) +
+  xlab("") +
+  ylab("Median and IQR")
+
+ggsave(plot = mqr, filename = paste0(fig_path, "median_iqr_ai.pdf"), height = 6, width = 6, useDingbats = FALSE)
+```
+
+# Reads proportion
+
+```{r}
+prop_ids<-melt(prop[,c(1:3,13:16)], id.vars = c("Samples", "Donor", "Tissue"))
+prop_ids$variable<-factor(prop_ids$variable, levels=c("Prop_tot_unkwn", "Prop_tot_rep", "Prop_tot_valid", "Prop_tot_mapped"))
+
+prop_ids$Samples<-as.factor(prop_ids$Samples)
+prop_ids$Samples<-factor(prop_ids$Samples, levels = (prop_ids %>% select(Samples, Tissue, value, variable) %>% filter(variable == "Prop_tot_unkwn") %>% arrange(desc(-value)))$Samples)
+
+ggplot(prop_ids, aes(x=Samples, y=value, fill=variable)) + 
+  ggtitle(label = "Proportion of reads per class") +
+  facet_grid(. ~Tissue, scales = "free") +
+  geom_bar(position="stack", stat="identity", width = 1) +
+  scale_fill_manual(values = c("#83D1C4", "#78517D", "#F01795", "#03045e"), labels = c("Unknown", "Repeated", "Remapped", "Mapped")) +
+  ylab("Proportion") +
+  labs(fill = "") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.text.y = element_text(size = 12),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_text(vjust = -0.75),
+        axis.ticks.x = element_blank(),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank())
+
+ggsave(filename = paste0(fig_path, "prop_reads.png"), height = 3, width = 7)
+```
+
+
+```{r}
+p <- ggplot(prop_ids, aes(x=Samples, y=value, fill=variable)) + 
+  #ggtitle(label = "Proportion of reads per class") +
+  facet_grid(. ~Tissue, scales = "free") +
+  geom_bar(position="stack", stat="identity", width = 1) +
+  scale_fill_manual(values = c("#83D1C4", "#78517D", "#F01795", "#03045e"), labels = c("Unknown", "Repeated", "Remapped", "Mapped")) +
+  ylab("Proportion") +
+  labs(fill = "") +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 10),
+        plot.subtitle = element_text(size = 8),
+        axis.title = element_text(size = 8),
+        axis.text.y = element_text(size = 6),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_text(vjust = -0.75),
+        axis.ticks.x = element_blank(),
+        strip.text = element_text(size = 7),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 7),
+        panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        legend.position = "top")
+
+
+ggsave(plot = p, filename = paste0(fig_path, "prop_reads_ai.pdf"), height = 3, width = 7, useDingbats = FALSE)
+```
+
+
+# Both
+
+```{r}
+all <- p / mqr + plot_layout(heights = c(0.7,2))
+
+# d <- layout <- c(
+#   area(t = 0.8, l = 1, b = 4, r = 9.5),
+#   area(t = 5, l = 1, b = 9, r = 9)
+# )
+# 
+# 
+# all <- p + mqr + plot_layout(design = d)
+
+```
+
+
+```{r}
+ggsave(plot = all, filename = paste0(fig_path, "all_ai.pdf"), height = 8.5, width = 9, useDingbats = FALSE)
+```
+
+
+
+

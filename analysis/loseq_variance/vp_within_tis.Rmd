@@ -1,0 +1,391 @@
+---
+title: "Variance partition within tissues"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+library(variancePartition)
+library(ComplexHeatmap)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_downsampled2500000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_downsampled2500000_tpms.txt"
+
+out_path <- "analysis/loseq_variance/"
+fig_path <- here("analysis/loseq_variance/figs/vp_within_tis_")
+
+tis <- c("buccal", "hair", "urine")
+gene_num <- 1000
+```
+
+# Functions
+
+```{r, echo=FALSE}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+```
+
+# Variables of interest
+
+```{r}
+#fixed <- c("r_rna_rate", "mapping_rate", "duplicate_rate_of_mapped_excluding_globins", "p_exons_total", "tin_mean", "mean_3_bias", "rna_conc_nd", "a260_280", "cdna_avesize", "cdna_conc", "lib_avesize", "lib_molarity", "gc_content_r1")
+
+fixed <- c("r_rna_rate", "mapping_rate", "duplicate_rate_of_mapped_excluding_globins", "exonic_rate", "mean_3_bias", "rna_conc_nd", "a260_280", "cdna_avesize", "gc_content_r1")
+
+random <- c("collection_number", "extraction_number", "donor_id") # removed "sex" because correlated strongly with donor_id
+
+#labels <- c("Residuals", "rRNA Rate", "Mapping Rate", "Duplicate Rate", "Exonic Rate", "Mean TIN", "Mean 3' bias", "RNA ng/uL", "A260/280", "cDNA Ave Size", "cDNA ng/uL", "Library Ave Size", "Library nmol", "GC Content", "Collection Number", "Extraction Number", "Donor ID")
+
+labels <- c("Residuals", "rRNA Rate", "Mapping Rate", "Duplicate Rate", "Exonic Rate", "Mean 3' bias", "RNA ng/uL", "A260/280", "cDNA Ave Size", "GC Content", "Collection Number", "Extraction Number", "Donor ID")
+
+names(labels) <- c("Residuals", fixed, random)
+
+#labels <- c("Residuals", "Collection Number", "Extraction Number", "Donor ID")
+
+#names(labels) <- c("Residuals", random)
+```
+
+# Define formula
+
+```{r}
+random_form <- paste0("(1 | ", random, ")", collapse = " + ")
+fixed_form <- paste0(fixed, collapse = " + ")
+
+form <- as.formula(paste("~ ", random_form, " + ", fixed_form))
+#form <- as.formula(paste("~ ", random_form))
+```
+
+
+# Analysis
+
+Approach based on "An integrated approach to identify environmental modulators of genetic risk factors for complex traits" Balliu et. al 2020; steps can be found in supplement header: Identifying major components of variability in RNA-Seq data
+
+# Create lists of raw and meta dfs to iterate over
+
+```{r}
+meta_seq <- meta_seq %>% filter(tissue %in% tis)
+cts <- cts[, colnames(cts) %in% meta_seq$group_name]
+meta_seq <- meta_seq %>% filter(group_name %in% colnames(cts))
+```
+
+```{r}
+raw_list <- vector(mode = "list", length = length(unique(meta_seq$tissue)))
+meta_list <- vector(mode = "list", length = length(unique(meta_seq$tissue)))
+
+meta_list <- lapply(tis, function(x) {
+  tis <- meta_seq %>% filter(tissue == x)
+  return(tis)
+})
+
+names(meta_list) <- tis
+
+raw_list <- lapply(tis, function(x) {
+  samps <- meta_seq %>% filter(tissue == x) %>% pull(group_name)
+  tis <- cts[, colnames(cts) %in% samps]
+  return(tis)
+})
+
+names(raw_list) <- tis
+```
+
+# Select, scale, and center all continuous (fixed) variables of interest
+
+```{r}
+cols <- c("group_name", random, fixed)
+#cols <- c("group_name", random)
+
+meta_list <- lapply(meta_list, "[", cols)
+
+for (i in 1:length(tis)) {
+  
+  meta_list[[i]][,random] <- lapply(meta_list[[i]][,random], factor)
+  
+  meta_list[[i]][,fixed] <- lapply(meta_list[[i]][,fixed], scale)
+  
+}
+```
+
+# Normalize and select most variable genes per tissue
+
+Need to reorder raw columns so match meta group_name rows:
+
+```{r}
+meta_list <- lapply(meta_list, function(x){
+  rownames(x) <- x$group_name
+  return(x)
+})
+
+for (i in 1:length(tis)) {
+  ord <- match(rownames(meta_list[[i]]), colnames(raw_list[[i]]))
+  raw_list[[i]] <- raw_list[[i]][,ord]
+}
+```
+
+```{r}
+dds_list <- vector(mode = "list", length = length(tis))
+
+for (i in 1:length(tis)) {
+  
+  dds_list[[i]] <- DESeqDataSetFromMatrix(countData = round(raw_list[[i]]),
+                                          colData = meta_list[[i]],
+                                          design = ~ 1)
+  
+  dds_list[[i]] <- estimateSizeFactors(dds_list[[i]])
+  
+  dds_list[[i]] <- vst(dds_list[[i]]) # similar to log normalizing
+  
+  rv <- rowVars(assay(dds_list[[i]]))
+  select <- order(rv, decreasing = TRUE)[seq_len(min(gene_num, length(rv)))] # select for most variable
+  
+  dds_list[[i]] <- assay(dds_list[[i]])[select,]
+  
+}
+
+names(dds_list) <- tis
+
+dds_list <- lapply(dds_list, "as.matrix")
+```
+
+# Variance partition
+
+error page: https://bioconductor.org/packages/devel/bioc/vignettes/variancePartition/inst/doc/FAQ.html
+
+if get: Error in serialize(data, node$con, xdr = FALSE) : 
+  error writing to connection --> restart R session
+  
+if get: Error in env[[as.character(i)]] <- value : 
+  wrong args for environment subassignment --> literally need to restart R and clear output and rerun everything each time because I think it saves arguments or something in the function environment.
+
+** Also sometimes literally have to restart R and rerun the exact same code 5x before it works, idk.
+
+```{r}
+vp <- vector(mode = "list", length = length(tis))
+
+for (i in 1:length(tis)) {
+  
+  vp[[i]] <- fitExtractVarPartModel(dds_list[[i]], form, meta_list[[i]])
+  
+}
+```
+
+```{r}
+vp <- lapply(vp, function(x){
+  x <- x[, names(labels)]
+  colnames(x) <- labels
+  x <- as.matrix(x)
+  return(x)
+})
+
+out <- lapply(vp, function(x) {
+  
+  mean <- colMeans(x)
+  temp <- as.data.frame(mean)
+  
+  temp %>% rownames_to_column("variable") %>% 
+  mutate("sd" = round(apply(X = x, MARGIN = 2, FUN = "sd"), digits = 2),
+         mean = round(mean, digits = 2)) %>% 
+  mutate("CI_high" = round((mean + sd), digits = 2),
+         "CI_low" = round((mean - sd), digits = 2))
+})
+
+names(out) <- tis
+out_df <- rbindlist(out, idcol = "tissue")
+```
+
+```{r}
+all_plot <- out_df %>% 
+  ggplot(aes(x = reorder(variable, mean), y = mean, color = tissue)) +
+    geom_point(position = position_dodge(0.5)) +
+    geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0, position = position_dodge(0.5)) +
+    scale_y_continuous(breaks = seq(-0.1,1,0.1), limits = c(-0.05,0.6)) +
+    coord_flip() +
+    #ylab("") +
+    #xlab("") +
+    ylab("Variance Explained (mean +/- sd)") +
+    xlab("Variable") +
+    #ggtitle("Contributors to variance in gene expression") +
+    theme_bw() +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid = element_blank()) +
+  scale_color_manual(values = myColors) +
+  facet_wrap(~tissue)
+
+ggsave(plot = all_plot, filename = paste0(fig_path, "all_faceted.png"), height = 4, width = 9)
+```
+
+
+```{r}
+plots <- lapply(tis, function(x) {
+  
+  p <- out[[x]]
+  
+  fig <- p %>% 
+    ggplot(aes(x = reorder(variable, mean), y = mean)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0, position = position_dodge(0.9)) +
+    scale_y_continuous(breaks = seq(-0.1,1,0.1), limits = c(-0.05,0.6)) +
+    coord_flip() +
+    #ylab("") +
+    #xlab("") +
+    ylab("Variance Explained (mean +/- sd)") +
+    xlab("Variable") +
+    ggtitle(paste0(tools::toTitleCase(x))) + #, ": Contributors to variance in gene expression")) +
+    theme_bw() +
+    theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+  
+  ggsave(plot = fig, paste0(fig_path, x, ".png"), height = 5, width = 5.5)
+  
+  return(fig)
+  
+})
+
+names(plots) <- tis
+```
+
+```{r}
+all <- (plots[[1]] + plots[[2]] + plots[[3]])
+
+ggsave(plot = all, filename = paste0(fig_path, "all.png"), height = 5, width = 16.5)
+```
+
+```{r}
+all_vertical <- ((plots[[1]] + plot_spacer()) / (plots[[2]] + plot_spacer()) / ((plots[[3]]) + plot_spacer()))
+
+ggsave(plot = all_vertical, filename = paste0(fig_path, "all_vertical.png"), height = 12, width = 7)
+```
+
+
+# CCA of input variables
+
+Need to set up formula without ~ (1|x) i.e. random variable format (CCA will still intake random variables).
+
+```{r}
+random_cca <- paste0(random, collapse = " + ")
+fixed_cca <- paste0(fixed, collapse = " + ")
+
+cca_form <- as.formula(paste("~ ", random_cca, " + ", fixed_cca))
+
+cca_res <- lapply(meta_list, function(x) {canCorPairs(cca_form, x)})
+```
+
+```{r}
+# Plot correlation matrix
+
+col_test=colorRampPalette(RColorBrewer::brewer.pal(9, "Blues"))(length(seq(0,1,0.1)))
+
+cca_res <- lapply(cca_res, function(x) {
+  
+  rownames(x) <- c("Collection number", "Extraction number", "Donor ID", "rRNA rate", "Mapping rate", "Duplicate rate", "Exonic rate", "Mean 3' Bias", "RNA yield", "A260/280", "cDNA avesize", "GC content")
+  colnames(x) <- c("Collection number", "Extraction number", "Donor ID", "rRNA rate", "Mapping rate", "Duplicate rate", "Exonic rate", "Mean 3' Bias", "RNA yield", "A260/280", "cDNA avesize", "GC content")
+  
+  return(x)
+  
+})
+
+cca_plots <- vector(mode = "list", length = length(cca_res))
+
+for (i in 1:length(cca_res)) {
+  
+  #pdf(file = paste0(fig_path, names(cca_res)[i], "_cca_heatmap-complex.pdf"), height = 5, width = 6)
+  
+  cca_plots[[i]] <- Heatmap(as.matrix(cca_res[[i]]),
+        col=col_test[1:length(col_test)/1.25],
+        column_title = paste0("CCA of Variables: ", names(cca_res)[i]),
+        rect_gp = gpar(col = "white", lwd = 2), 
+        border = "black",
+        cluster_columns = TRUE,
+        #heatmap_height = unit(1, "cm")*nrow(t(mat)),
+        #heatmap_width = unit(1, "cm")*nrow(t(mat))*0.5,
+        #column_km = 3,
+        #column_km_repeats = 10,
+        #show_parent_dend_line = FALSE,
+        #clustering_distance_rows = "euclidean",
+        #clustering_distance_columns = "euclidean",
+        row_names_gp = gpar(fontsize = 12),
+        column_names_gp = gpar(fontsize = 12),
+        heatmap_legend_param = list(title = "Corr"),
+        #cell_fun = function(j, i, x, y, width, height, fill) {
+        #grid.text(sprintf("%.2f", cca_res[i, j]), x, y, gp = gpar(col = "black", fontsize = 10))
+#}
+)
+  
+  #dev.off()
+  
+}
+```
+
+Won't let me iteratively save.....
+
+```{r}
+pdf(file = paste0(fig_path, names(cca_res)[1], "_cca_heatmap-complex.pdf"), height = 5, width = 6)
+  
+cca_plots[[1]]
+  
+dev.off()
+```
+
+```{r}
+pdf(file = paste0(fig_path, names(cca_res)[2], "_cca_heatmap-complex.pdf"), height = 5, width = 6)
+  
+cca_plots[[2]]
+  
+dev.off()
+```
+
+```{r}
+pdf(file = paste0(fig_path, names(cca_res)[3], "_cca_heatmap-complex.pdf"), height = 5, width = 6)
+  
+cca_plots[[3]]
+  
+dev.off()
+```
+

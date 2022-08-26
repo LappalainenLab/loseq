@@ -1,0 +1,122 @@
+diseaseId	name	datasourceId	targetId	score
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000137845	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000137845	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000182168	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000064687	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000137642	0.5
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000198888	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000137642	0.5
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000137642	0.5
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_variants	ENSG00000142192	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000204843	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000122359	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000135406	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000122359	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000127824	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000155980	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000155980	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000122359	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000127824	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000155980	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000204843	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000127824	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000204843	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000122359	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000127824	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000122359	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000160803	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000127824	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000135406	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000155980	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000137601	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000122359	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000204843	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000155980	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_variants	ENSG00000142168	1
+EFO_0000400	diabetes mellitus	uniprot_variants	ENSG00000106331	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000056972	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_variants	ENSG00000141527	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000134242	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_variants	ENSG00000213689	1
+EFO_0003767	inflammatory bowel disease	uniprot_variants	ENSG00000163362	1
+EFO_0003767	inflammatory bowel disease	uniprot_variants	ENSG00000085978	1
+EFO_0003882	osteoporosis	uniprot_variants	ENSG00000125084	1
+EFO_0003882	osteoporosis	uniprot_variants	ENSG00000125084	1

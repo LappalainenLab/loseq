@@ -1,0 +1,1 @@
+diseaseId	name	datasourceId	targetId	score

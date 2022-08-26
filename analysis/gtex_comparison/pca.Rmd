@@ -1,0 +1,268 @@
+---
+title: "GTEx PCA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+library(matrixStats)
+```
+
+# Inputs
+
+```{r}
+loseq_key_path <- here("data/samplekey_485.txt")
+gtex_key_path <- here("data/gtex/GTEx_Analysis_2017-06-05_v8_Annotations_SampleAttributesDS.txt")
+
+loseq_cts_path <- here("data/downsampled_counts/loseq_allpreps_threshold2500000_raw.txt")
+gtex_cts_path <- here("data/gtex/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_reads.gct.gz")
+
+out_path <- here("analysis/gtex_comparison/")
+fig_path <- here("analysis/gtex_comparison/figs/pca_")
+
+loseq_tis <- c("buccal", "hair", "saliva", "urine") # saliva only has a few data points
+rep_tissues <- here("data/gtex/representative_tissues.10.txt")
+
+#gtex_tis <- c("Adipose - Subcutaneous", "Artery - Tibial", "Cells - Cultured fibroblasts", "Cells - EBV-transformed lymphocytes", "Esophagus - Mucosa", "Heart - Left Ventricle", "Kidney - Cortex", "Lung", "Muscle - Skeletal", "Skin - Not Sun Exposed (Suprapubic)", "Skin - Sun Exposed (Lower leg)", "Whole Blood")
+
+gtex_n <- 19
+gene_num <- 1000
+```
+
+# Functions
+
+```{r}
+source(here("src/base_functions.R"))
+source(here("src/remove_txn_id.R"))
+source(here("src/counts_processing_fxns.R"))
+```
+
+# Data
+
+```{r}
+loseq_key <- fread(loseq_key_path, data.table = FALSE)
+gtex_key <- fread(gtex_key_path, data.table = FALSE)
+
+loseq_cts <- fread(loseq_cts_path, data.table = FALSE) %>% column_to_rownames("V1")
+gtex_cts <- fread(gtex_cts_path, data.table = FALSE)
+
+gtex_tis <- fread(here(rep_tissues), data.table = FALSE) # add kidney cortex, esophagus, spleen, lung, fibroblasts
+gtex_tis <- c(gtex_tis$SMTSD, "Esophagus - Mucosa", "Kidney - Cortex", "Cells - Cultured fibroblasts", "Lung", "Spleen")
+
+source(here("src/gtex_loseq_colors.R"))
+```
+
+# Format colors
+
+```{r}
+myColors <- myColors[c(gtex_tis, loseq_tis)]
+```
+
+# Format Loseq # TEST FILTER FOR HIGHEST DEPTH
+
+```{r}
+# filter out hek and for loseq samples
+
+loseq_key <- loseq_key %>% filter(group_name %in% colnames(loseq_cts),
+                                  prep == "loseq",
+                                  tissue %in% loseq_tis,
+                                  highest_p_depth_samp == TRUE) # TEST
+
+loseq_key <- loseq_key[!duplicated(loseq_key$donor_col_tis),] # remove any technical replicates
+
+loseq_sel <- loseq_key %>% select(group_name, tissue)
+
+loseq_cts <- loseq_cts[, colnames(loseq_cts) %in% loseq_sel$group_name]
+```
+
+# Format GTEx
+
+fix txn ids, make rownames, filter for tissues, sample subset of samples, make sel, select cts samples
+
+```{r}
+# fix transcript ids, make rownames
+gtex_cts$Name <- remove_txn_id(gtex_cts$Name)
+
+gtex_cts <- gtex_cts %>% select(-Description) %>% column_to_rownames("Name")
+```
+
+```{r}
+# filter for samples in cts
+gtex_key <- gtex_key %>% filter(SAMPID %in% colnames(gtex_cts))
+
+# filter for subset of tissues
+gtex_sel <- gtex_key %>% 
+  filter(SMTSD %in% gtex_tis) %>% rename("SMTSD" = "tissue",
+                                         "SAMPID" = "group_name") %>% 
+  select(group_name, tissue) %>% 
+  group_by(tissue) %>% 
+  sample_n(gtex_n)
+
+# select cts
+gtex_cts <- gtex_cts[, colnames(gtex_cts) %in% gtex_sel$group_name]
+```
+
+# Merge cts/keys
+
+```{r}
+# merge cts
+cts <- merge(loseq_cts, gtex_cts, by = 0)
+cts <- cts %>% column_to_rownames("Row.names")
+
+# rbind keys
+gtex_sel <- as.data.frame(gtex_sel)
+key <- rbind(gtex_sel, loseq_sel)
+```
+
+# VST normalize
+
+```{r}
+# put in the same order
+rownames(key) <- key$group_name
+ord <- match(colnames(cts), rownames(key))
+key <- key[ord,]
+
+out <- dds_norm(raw_cts = cts, key_df = key, dds_design = c("~1", "tissue"))
+
+list2env(out, envir = .GlobalEnv)
+```
+
+# GTEx PCA
+
+```{r}
+gtex_samps <- key %>% filter(tissue %in% gtex_tis) %>% pull(group_name)
+
+rv <- rowVars(assay(vsd)[, gtex_samps])
+select <- order(rv, decreasing = TRUE)[seq_len(min(gene_num, length(rv)))] # select top 500 most variable genes
+```
+
+```{r}
+pca <- prcomp(t(assay(vsd)[select, gtex_samps]), center = TRUE, scale. = TRUE)
+
+g <- pca$x # pulls PC dataframe
+pca_loadings <- pca$rotation
+
+percentVar <- round(pca$sdev^2/sum(pca$sdev^2), digits =3)
+```
+
+```{r}
+# d <- merge(d, key, by = 0)
+# 
+# d <- d %>% mutate("dataset" = ifelse(tissue %in% loseq_tis, "loseq", "gtex"))
+```
+
+# Loseq Projection
+
+```{r}
+# Center all samples
+#cpms_scaled <- scale(t(gl_cpms[select,]), center = T, scale = F)
+
+centered <- scale(t(assay(vsd)[select,]), center = T, scale = F)
+
+# Project samples based on GTEx PCA
+projected <- as.matrix(centered) %*% as.matrix(pca_loadings)
+```
+
+```{r}
+d <- merge(projected, key, by = 0)
+
+d <- d %>% mutate("dataset" = ifelse(tissue %in% loseq_tis, "loseq", "gtex"))
+```
+
+```{r}
+write.table(d, file = here::here("analysis/final_figs/inputs/fig4_MAIN_gtex_pca.txt"), sep = "\t")
+saveRDS(object = percentVar, file = here::here("analysis/final_figs/inputs/fig4_MAIN_gtex_pca_pvar.rds"))
+```
+
+
+# Plot PCA
+
+Variance explained:
+
+```{r}
+pvar <- as.data.frame(percentVar)
+pvar <- pvar %>% rownames_to_column("PC_num") %>% mutate(PC_num = as.numeric(PC_num))
+
+v <- pvar %>% 
+  filter(PC_num <= 20) %>% 
+  ggplot(aes(x = PC_num, y = percentVar*100)) +
+      labs(x = "Expression PC",
+           title = "Variance Explained",
+           y = "Percent") +
+      geom_line() +
+      geom_point(pch = 21, fill = "white") +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(0,20,1)) +
+  theme(panel.grid.minor = element_blank()) +
+  scale_y_continuous(breaks = seq(0, 60, 5))
+
+ggsave(plot = v, filename = paste0(fig_path, "percentVar.png"))
+```
+
+PC1 vs PC2:
+
+```{r}
+p12 <- d %>% ggplot(aes(x = PC1, y = PC2, color = tissue, shape = dataset)) +
+  geom_point(size = 2) +
+  xlab(paste0("PC1: ", percentVar[1]*100, "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2]*100, "% variance")) +
+  theme_bw() +
+  #theme(legend.position = "top") +
+  scale_colour_manual(name = "tissue", values = myColors, drop = TRUE) +
+  scale_shape_manual(values = c(20, 3)) +
+  stat_ellipse(level = 0.95)
+
+ggsave(plot = p12, filename = paste0(fig_path, "PC1_PC2.png"))
+```
+
+PC2 vs PC3:
+
+```{r}
+p23 <- d %>% ggplot(aes(x = PC2, y = PC3, color = tissue, shape = dataset)) +
+  geom_point(size = 2) +
+  xlab(paste0("PC2: ", percentVar[2]*100, "% variance")) +
+  ylab(paste0("PC3: ", percentVar[3]*100, "% variance")) +
+  theme_bw() +
+  #theme(legend.position = "top") +
+  scale_colour_manual(name = "tissue", values = myColors, drop = TRUE) +
+  scale_shape_manual(values = c(20, 3)) +
+  stat_ellipse(level = 0.95)
+
+ggsave(plot = p23, filename = paste0(fig_path, "PC2_PC3.png"))
+```
+
+All:
+
+```{r}
+all <- ((p12 / p23 / v) + plot_layout(guides = "collect"))
+
+ggsave(plot = all, filename = paste0(fig_path, "all_figs.png"), height = 12, width = 7)
+```
+
+```{r}
+all_pcs <- ((p12 / p23) + plot_layout(guides = "collect"))
+
+ggsave(plot = all_pcs, filename = paste0(fig_path, "all_PC123.png"), height = 8, width = 7)
+```
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,218 @@
+---
+title: "Sample Key Processing"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = here::here())
+
+source(here::here("src/base_functions.R"))
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(here)
+library(data.table)
+```
+
+# Functions
+
+```{r}
+```
+
+# Inputs
+
+```{r}
+out_path <- paste0(here::here(), "/data/")
+
+df_raw <- data.table::fread(here("sequencing/200914_novaseq_processing/featureCounts/loseq485_raw_nofilt_featcounts.txt"), sep = "\t", data.table = FALSE)
+
+df_key <- fread(here("data/raw_data/210223_samplekey_ce_loseq508.txt"), data.table = FALSE)
+
+df_seq_pass <- fread(here("data/downsampled_counts/loseq_allpreps_threshold1000000_raw.txt"), data.table = FALSE)
+
+df_gene_type <- read.table("data/gencode.v26.ensemblv103.gene_annot.txt", sep = "\t", header = TRUE, stringsAsFactors = FALSE)
+
+df_qc <- fread(here("data/raw_data/220410_RNAseQC_merged.txt")) # OLD WAS 4/6/21, FIXED 4/10/22 - strandedness was indicated but was not true so intergenic rate was high, rewrote to same sample key to not fuck up other scripts
+
+df_sex <- read.delim(here("data/donor_sex.txt"), row.names = 1)
+
+# will process in analysis section:
+
+# read dist:
+d <- list.files(path = here("sequencing/200914_novaseq_processing/Read_Distribution/"), pattern = ".txt")
+
+# tin:
+t <- list.files(path = here("sequencing/200914_novaseq_processing/TIN/"), pattern = ".R1.Aligned.sortedByCoord.out.summary.txt")
+```
+
+
+# Constants
+
+```{r}
+tis <- unique(df_key$tissue)
+```
+
+# Analysis
+
+## Fix prep column, add prep p/f indicator column
+
+```{r}
+df_key <- df_key %>% mutate(prep = ifelse(prep %in% tis, "loseq", prep),
+                            passed = case_when(
+                              is.na(number_reads_r1) ~ "failed",
+                              !is.na(number_reads_r1) & group_name %notin% colnames(df_seq_pass) ~ "wetlab_QC",
+                              !is.na(number_reads_r1) & group_name %in% colnames(df_seq_pass) ~ "seq_QC"
+                            ))
+```
+
+## Save 508 key file
+
+```{r}
+write.table(df_key, file = paste0(out_path, "samplekey_508.txt"), sep = "\t", col.names = TRUE, row.names = FALSE)
+```
+
+
+## Add TIN
+
+```{r}
+t <- paste0(here("sequencing/200914_novaseq_processing/TIN/"), t)
+
+t <- lapply(t, "fread", sep = "\t", data.table = FALSE)
+
+df_t <- rbindlist(t)
+```
+
+Clean:
+
+```{r}
+df_t <- df_t %>% janitor::clean_names()
+
+df_t <- df_t %>% mutate(group_name = gsub(pattern = ".R1.Aligned.sortedByCoord.out.bam", replacement = "", bam_file))
+```
+
+```{r}
+df_key <- merge(df_key, df_t)
+```
+
+## Add read dist
+
+```{r}
+l <- paste0(here("sequencing/200914_novaseq_processing/Read_Distribution/"), d)
+
+group_name <- lapply(l, function(x){
+  
+  temp1 <- gsub(pattern = "/gpfs/commons/groups/lappalainen_lab/loseq/sequencing/200914_novaseq_processing/Read_Distribution/", replacement = "", x)
+  temp2 <- gsub(pattern = ".txt", replacement = "", temp1)
+  # temp3 <- gsub(pattern = "-", replacement = ".", temp2)
+  
+  return(temp2)
+})
+
+group_name <- unlist(group_name)
+
+df_rd <- lapply(l, "fread", sep = "\t", data.table = FALSE)
+
+names(df_rd) <- group_name
+```
+
+Clean:
+
+```{r}
+
+df_rd_clean <- vector(mode = "list", length = length(df_rd))
+
+for (i in 1:length(df_rd)) {
+  df_rd_clean[[i]] <- data.frame(group_name = names(df_rd)[i],
+                   total_assigned_tags = as.numeric(str_split(df_rd[[i]][1,1], 
+                                                              pattern = " ")[[1]][22]),
+                   cds_exons = as.numeric(str_split(df_rd[[i]][5,1], pattern = " ")[[1]][24]),
+                   utr_5_exons = as.numeric(str_split(df_rd[[i]][6,1], pattern = " ")[[1]][22]),
+                   utr_3_exons = as.numeric(str_split(df_rd[[i]][7,1], pattern = " ")[[1]][22]),
+                   introns = as.numeric(str_split(df_rd[[i]][8,1], pattern = " ")[[1]][24]),
+                   tss_up_10kb = as.numeric(str_split(df_rd[[i]][11,1], pattern = " ")[[1]][21]),
+                   tes_down_10kb = as.numeric(str_split(df_rd[[i]][14,1], pattern = " ")[[1]][19]))
+}
+
+df_rd_clean <- rbindlist(df_rd_clean)
+```
+
+Calculate proportions of reads assigned:
+
+```{r}
+df_rd_clean <- df_rd_clean %>% 
+  mutate(p_cds_exons = cds_exons/total_assigned_tags,
+         p_utr_5_exons = utr_5_exons/total_assigned_tags,
+         p_utr_3_exons = utr_3_exons/total_assigned_tags,
+         p_introns = introns/total_assigned_tags,
+         p_tss_up_10kb = tss_up_10kb/total_assigned_tags,
+         p_tes_down_10kb = tes_down_10kb/total_assigned_tags,
+         p_exons_total = (cds_exons + utr_5_exons + utr_3_exons)/total_assigned_tags)
+```
+
+Merge read dist with meta/qc:
+
+```{r}
+df_key <- merge(df_key, df_rd_clean)
+```
+
+## Add some depth columns
+
+```{r}
+df_raw <- df_raw %>% column_to_rownames("Geneid") %>% select(-Length)
+
+depth <- data.frame("group_name" = colnames(df_raw),
+                    "total_depth" = colSums(df_raw))
+
+df_key <- merge(df_key, depth)
+```
+
+## Add highest depth indicator column
+
+```{r}
+# Get protein coding/lncRNA gene list
+
+p_lncrna_genes <- df_gene_type %>% filter(type %in% c("protein_coding", "lncRNA")) %>% pull(gene_id)
+
+# get highest depth loseq sample per donor_id
+
+sums <- as.data.frame(setNames(colSums(df_raw[p_lncrna_genes,]), colnames(df_raw)))
+colnames(sums) <- c("protein_coding_depth")
+sums <- sums %>% rownames_to_column("group_name")
+
+df_key <- merge(df_key, sums, by = "group_name")
+
+df_key <- df_key %>% 
+  group_by(tissue, donor_id, prep) %>% 
+  mutate(highest_p_depth_samp = ifelse(protein_coding_depth == max(protein_coding_depth) & prep == "loseq", TRUE, FALSE))
+```
+
+## Output top sample file
+
+```{r}
+df_top <- df_key %>% filter(highest_p_depth_samp == TRUE) %>% select(donor_id, group_name, tissue, prep)
+
+write.table(df_top, file = paste0(out_path, "top_donor_tis_loseq.txt"), sep = "\t", col.names = TRUE, row.names = FALSE)
+```
+
+# Merge RNA-SeQC and donor sex
+
+```{r}
+df_key$sex <- df_sex[df_key$donor_id,"sex"]
+```
+
+```{r}
+df_key <- merge(df_key, df_qc, by = "group_name")
+```
+
+## Save 485 key file
+
+```{r}
+write.table(df_key, file = paste0(out_path, "samplekey_485.txt"), sep = "\t", col.names = TRUE, row.names = FALSE)
+```
+

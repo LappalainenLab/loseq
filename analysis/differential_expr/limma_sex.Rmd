@@ -1,0 +1,598 @@
+---
+title: "limma Sex DE"
+author: "Molly Martorella"
+date: "5/28/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+library(ggrepel)
+library(ComplexHeatmap)
+library(edgeR)
+library(limma)
+library(qvalue)
+library(fgsea)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_tpms.txt"
+
+out_path <- here("analysis/differential_expr/")
+fig_path <- here("analysis/differential_expr/figs/limma_sex_")
+
+donor_sex_path <- "data/donor_sex.txt"
+gene_annot_path <- "data/gencode.v26.ensemblv103.gene_annot.txt"
+
+gtex_de_path <- "data/gtex/GTEx_Analysis_v8_sbgenes/signif.sbgenes.txt"
+
+hallmark_path <- "data/gsea_msigdb/h.all.v7.5.1.symbols.gmt"
+
+tis <- c("buccal", "hair", "urine") # remove saliva because only males left
+```
+
+# Functions
+
+```{r, echo=FALSE}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+donor_sex <- fread(here(donor_sex_path), data.table = FALSE)
+gene_annot <- fread(here(gene_annot_path), data.table = FALSE)
+sex_genes <- gene_annot %>% filter(seqid %in% c("chrX", "chrY"))
+
+gtex_de <- fread(here(gtex_de_path), data.table = FALSE)
+gtex_de$gene <- gsub(pattern = "\\.\\d+", replacement = "", gtex_de$gene)
+gtex_tis <- unique(gtex_de$tissue)
+
+hallmark <- gmtPathways(here(hallmark_path))
+
+source(here::here("src/gtex_loseq_colors.R"))
+names(myColors) <- gsub(names(myColors), pattern = " - ", replacement = "_")
+names(myColors) <- gsub(names(myColors), pattern = " ", replacement = "_")
+names(myColors) <- gsub(names(myColors), pattern = "\\(", replacement = "")
+names(myColors) <- gsub(names(myColors), pattern = "\\)", replacement = "")
+names(myColors) <- gsub(names(myColors), pattern = "-", replacement = ".")
+gtex_colors <- myColors[gtex_tis]
+myColors <- myColors[tis]
+```
+
+# Select thresholded samples, loseq-only, remove hek, remove saliva (only males left), select only first replicate
+
+```{r}
+meta_seq <- meta_seq %>% filter(group_name %in% colnames(cts),
+                                tissue %in% tis,
+                                prep == "loseq",
+                                replicate %in% c("0", "1")) %>% 
+  mutate(sex = ifelse(sex == "m", "male", "female"))
+
+# match cts and meta samples
+cts <- cts[, colnames(cts) %in% meta_seq$group_name]
+tpms <- tpms[, colnames(tpms) %in% meta_seq$group_name]
+```
+
+# Create cts and coldata per tissue (lists)
+
+```{r}
+meta_cols <- lapply(tis, function(x) {
+  tis_df <- meta_seq %>% filter(tissue == x) %>% select(group_name, tissue, sex, donor_id) %>% column_to_rownames("group_name")
+  return(tis_df)
+})
+```
+
+```{r}
+tis_cts <- lapply(meta_cols, function(x) {
+  samps <- rownames(x)
+  cts_out <- cts[, colnames(cts) %in% samps]
+  return(cts_out)
+})
+
+names(tis_cts) <- tis # 58 buccal, 75 hair, 70 urine
+
+tis_tpms <- lapply(meta_cols, function(x) {
+  samps <- rownames(x)
+  tpms_out <- tpms[, colnames(tpms) %in% samps]
+  return(tpms_out)
+})
+
+names(tis_tpms) <- tis # 58 buccal, 75 hair, 70 urine
+```
+
+# Filter counts
+
+```{r}
+filt <- lapply(1:length(tis), function(x) {
+  out <- filter_counts(raw_cts = tis_cts[[x]], tpm_cts = tis_tpms[[x]], raw_threshold = 8)
+  return(out)
+})
+```
+
+```{r}
+tis_cts <- lapply(filt, "[[", 1)
+```
+
+# Filter gene annotation for genes in cts
+
+```{r}
+genes <- lapply(tis_cts, function(x) {
+  g <- rownames(x)
+  overlap <- intersect(g, gene_annot$gene_id)
+  out <- gene_annot[gene_annot$gene_id %in% overlap,]
+  return(out)
+})
+
+tis_cts <- lapply(1:length(tis_cts), function(x) {
+  out <- tis_cts[[x]][rownames(tis_cts[[x]]) %in% genes[[x]]$gene_id,]
+  return(out)
+})
+```
+
+# Make DGEList object
+
+```{r}
+tis_dge <- lapply(1:length(tis), function(x) {
+  DGEList(counts = tis_cts[[x]], genes = genes[[x]])
+})
+```
+
+# Scale normalization
+
+```{r}
+tis_dge <- lapply(tis_dge, function(x) {calcNormFactors(x)})
+```
+
+# Design matrix
+
+```{r}
+design <- lapply(1:length(tis), function(x) {
+  model.matrix(~ sex, data = meta_cols[[x]])
+})
+```
+
+# Estimate corr
+
+```{r}
+tis_voom <- lapply(1:length(tis), function(x) {
+  voom(tis_dge[[x]], design = design[[x]])
+})
+```
+
+```{r}
+tis_cor <- lapply(1:length(tis), function(x) {
+  duplicateCorrelation(tis_voom[[x]], design[[x]], block = meta_cols[[x]]$donor_id)
+})
+```
+
+```{r}
+tis_voom <- lapply(1:length(tis), function(x) {
+  voom(tis_dge[[x]], design = design[[x]], plot = TRUE, block = meta_cols[[x]]$donor_id, correlation = tis_cor[[x]]$consensus.correlation)
+})
+```
+
+# Get sex DE genes
+
+```{r}
+tis_fit <- lapply(1:length(tis), function(x) {
+  lmFit(tis_voom[[x]], design[[x]], block = meta_cols[[x]]$donor_id, correlation = tis_cor[[x]]$consensus.correlation)
+})
+
+tis_fit <- lapply(tis_fit, function(x) {eBayes(x)})
+
+tis_sum <- lapply(tis_fit, function(x) {as.data.frame(summary(decideTests(x)))})
+names(tis_sum) <- tis
+tis_sum <- rbindlist(tis_sum, idcol = "tissue")
+```
+
+```{r}
+# all results
+tis_res <- lapply(tis_fit, function(x) {topTable(x, coef = "sexmale", n = Inf, sort = "p")[,-1]})
+
+# sig results
+tis_res_05 <- lapply(tis_fit, function(x) {topTable(x, coef = "sexmale", n = Inf, sort = "p", p = 0.05)[,-1]})
+```
+
+# Plot formatting
+
+```{r}
+# hair = skin, buccal = esophageal mucosa, urine = kidney ctx
+gtex_tis_sel <- c("Esophagus_Mucosa", "Skin_Sun_Exposed_Lower_leg", "Kidney_Cortex")
+
+gtex_sel <- gtex_de %>% filter(tissue %in% gtex_tis_sel)
+gtex_sel_genes <- lapply(gtex_tis_sel, function(x) {gtex_sel %>% filter(tissue == x) %>% pull(gene)})
+names(gtex_sel_genes) <- gtex_tis_sel
+
+# make gtex sig with effect size minimum for labels?
+gtex_labels <- lapply(gtex_tis_sel, function(x) {gtex_sel %>% filter(tissue == x,
+                                                                     abs(effsize) >= 0.1) %>% pull(gene)})
+names(gtex_labels) <- gtex_tis_sel
+
+gtex_de_genes <- unique(gtex_de$gene)
+```
+
+```{r}
+tis_bar <- lapply(1:length(tis_res), function(x) {
+  tis_res[[x]] %>% rownames_to_column("gene") %>%
+    mutate("diff_expr" = case_when(
+             adj.P.Val <= 0.05 & logFC > 0 ~ "male",
+             adj.P.Val <= 0.05 & logFC < 0 ~ "female",
+             adj.P.Val > 0.05 ~ "non-sig"
+           ))
+})
+
+tis_bar <- lapply(tis_bar, function(x) {
+  
+  x %>% filter(adj.P.Val <= 0.05) %>% group_by(diff_expr) %>% summarise(n = n())
+  
+})
+
+names(tis_bar) <- tis
+tis_bar <- rbindlist(tis_bar, idcol = "tissue")
+
+
+temp <- data.frame("tissue" = rep("buccal", 2),
+                   "diff_expr" = c("female", "male"),
+                   "n" = c(0,0))
+
+tis_bar <- rbind(temp, tis_bar)
+```
+
+Filter out genes on chrX and chrY
+
+```{r}
+tis_res <- lapply(tis_res, function(x) {x %>% filter(seqid %notin% c("chrY", "chrX"))})
+```
+
+```{r}
+# tis_plot <- lapply(1:length(tis_res), function(x) {
+#   tis_res[[x]] %>% rownames_to_column("gene") %>%
+#     mutate("sig_in_gtex" = ifelse(gene %in% gtex_sel_genes[[x]], "yes", "no"), # gtex_sel_genes[[x]]
+#            "diff_expr" = case_when(
+#              adj.P.Val <= 0.05 & logFC > 0 ~ "male",
+#              adj.P.Val <= 0.05 & logFC < 0 ~ "female",
+#              adj.P.Val > 0.05 ~ "non-sig"
+#            )) %>%
+#     mutate("gene_label" = ifelse(sig_in_gtex == "yes" & adj.P.Val <= 0.05, gene_name, ""), # set based on gtex_labels
+#            "gene_label" = ifelse(-log10(adj.P.Val) >= 10, gene_name, gene_label))
+# })
+
+tis_plot <- lapply(1:length(tis_res), function(x) {
+  tis_res[[x]] %>% rownames_to_column("gene") %>%
+    mutate("sig_in_gtex" = ifelse(gene %in% gtex_sel_genes[[x]], "yes", "no"), # gtex_sel_genes[[x]]
+           "diff_expr" = case_when(
+             sig_in_gtex == "yes" & adj.P.Val <= 0.05 ~ "GTEx-sig",
+             adj.P.Val <= 0.05 & logFC > 0 ~ "male",
+             adj.P.Val <= 0.05 & logFC < 0 ~ "female",
+             adj.P.Val > 0.05 ~ "non-sig"
+           )) %>%
+    mutate("gene_label" = ifelse(gene %in% gtex_labels[[x]] & adj.P.Val <= 0.05, gene_name, ""), # set based on gtex_labels
+           "gene_label" = ifelse(-log10(adj.P.Val) >= 9, gene_name, gene_label))
+})
+```
+
+# Results analysis
+
+- calculate pi1 from loseq p values when select for GTEx sex DE genes
+- plot volcano plot with GTEx DE sig genes labeled
+- run goEnrich on results
+
+# Loseq summary plot
+
+```{r}
+# bar <- tis_sum %>% 
+#   filter(Var2 == "sexmale",
+#          Var1 != "NotSig") %>% 
+#   mutate("direction" = case_when(
+#     Var1 == "Up" ~ "Male",
+#     Var1 == "Down" ~ "Female"
+#   )) %>% 
+#   ggplot(aes(x = tissue, y = Freq, fill = direction)) +
+#   geom_col(position = "dodge") +
+#   geom_text(aes(label = Freq), position = position_dodge(width = 0.9), vjust = -0.5, size = 4) +
+#   theme_bw() +
+#   scale_y_continuous(breaks = seq(0, 1000, 100), expand = c(0,0), limits = c(0, 1000)) +
+#   ylab("Gene number") +
+#   ggtitle("Sex-based Differentially expressed genes") +
+#   scale_fill_discrete(name = "Direction", labels = c("Female", "Male"), type = c("#A6CEE3", "#B2DF8A")) + #"male" = "#B2DF8A", "female" = "#A6CEE3
+#   theme(plot.title = element_text(size = 14),
+#                   plot.subtitle = element_text(size = 13),
+#                   axis.title = element_text(size = 13),
+#                   axis.title.y = element_text(vjust = 2),
+#                   axis.title.x = element_blank(),
+#                   axis.text = element_text(size = 12),
+#                   strip.text = element_text(size = 12),
+#                   legend.title = element_text(size = 13),
+#                   legend.text = element_text(size = 12))
+
+bar <- tis_bar %>%
+  ggplot(aes(x = tissue, y = n, fill = diff_expr)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = n), position = position_dodge(width = 0.9), vjust = -0.5, size = 4) +
+  theme_bw() +
+  scale_y_continuous(breaks = seq(0, 1000, 100), expand = c(0,0), limits = c(0, 1000)) +
+  ylab("Gene number") +
+  ggtitle("Sex-based Differentially expressed genes") +
+  scale_fill_discrete(name = "Direction", labels = c("Female", "Male"), type = c("#377EB8", "#4DAF4A")) + #"male" = "#B2DF8A", "female" = "#A6CEE3 colors <- c("male" = "#4DAF4A", "female" = "#377EB8", "non-sig" = "#999999", "GTEx-sig" = "#E41A1C")
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_blank(),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+```
+
+```{r}
+ggsave(plot = bar, filename = paste0(fig_path, "summary_barplot.png"), height = 4, width = 6)
+```
+
+```{r}
+ggsave(plot = bar, filename = paste0(fig_path, "summary_barplot.pdf"), height = 4, width = 6)
+```
+
+# Proportion GTEx DE captured per GTEx tissue
+
+```{r}
+p_df <- data.frame(row.names = gtex_tis,
+                   "buccal" = rep(NA, length(gtex_tis)),
+                   "hair" = rep(NA, length(gtex_tis)), 
+                   "urine" = rep(NA, length(gtex_tis)))
+
+# for (t in 1:length(tis)) {
+#   for (g in gtex_tis) {
+#     p_df[g, t] <- length(intersect(rownames(tis_res[[t]][tis_res[[t]]$adj.P.Val <= 0.05,]), gtex_de[gtex_de$tissue == g,]$gene))/nrow(gtex_de[gtex_de$tissue == g,])  
+#   }
+# }
+
+for (t in 1:length(tis)) {
+  for (g in gtex_tis) {
+    p_df[g, t] <- length(intersect(rownames(tis_res[[t]][tis_res[[t]]$adj.P.Val <= 0.05,]), gtex_de[gtex_de$tissue == g,]$gene))  
+  }
+}
+
+p_df <- p_df %>% 
+  rownames_to_column("tissue") %>% 
+  pivot_longer(cols = buccal:urine, names_to = "loseq_tissue", values_to = "count")
+
+p_df %>% 
+  filter(loseq_tissue != "buccal") %>% 
+  ggplot(aes(x = tissue, y = count, fill = tissue)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = round(count, digits = 2)), vjust = -0.5, size = 4) +
+  theme_bw() +
+  ylab("Count") +
+  ggtitle("GTEx sex-based DE gene capture") +
+  facet_wrap(~loseq_tissue, nrow = 2) +
+  scale_fill_manual(values = gtex_colors) +
+  scale_y_continuous(limits = c(0,250)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_blank(),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        legend.position = "none")
+
+ggsave(filename = paste0(fig_path, "gtex_de_capture.pdf"), useDingbats = FALSE, width = 12, height = 7)
+```
+
+
+# Volcano plots
+
+
+```{r}
+#sizes <- c("upreg" = 2, "downreg" = 2, "non-sig" = 1)
+#colors <- c("male" = "darkgreen", "female" = "darkblue", "non-sig" = "grey", "GTEx-sig" = "red")
+# colors <- c("male" = "#B2DF8A", "female" = "#A6CEE3", "non-sig" = "#F2F2F2", "GTEx-sig" = "#E31A1C")
+colors <- c("male" = "#4DAF4A", "female" = "#377EB8", "non-sig" = "#999999", "GTEx-sig" = "#E41A1C")
+names(tis_plot) <- tis
+
+vplots <- vector(mode = "list", length = 3)
+
+for (i in 1:length(tis_plot)) {
+  
+  vplots[[i]] <- tis_plot[[i]] %>% 
+    ggplot(aes(x=logFC, y=-log10(adj.P.Val), color = diff_expr, label = gene_label)) + # size = diff_expr
+    geom_point(alpha = 0.5, size = 2) + # aes(shape = sig_in_gtex, size = sig_in_gtex), 
+    geom_point(data = subset(tis_plot[[i]], diff_expr == 'GTEx-sig'),
+             aes(x=logFC, y=-log10(adj.P.Val), color = diff_expr), size = 2) +
+    theme_bw() +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black", size = 0.4) +
+    geom_text_repel(aes(segment.size = 0.2), box.padding = 0.1, max.overlaps = Inf, seed = 42, min.segment.length = 0.5) +
+    #geom_text_repel(size = 3,box.padding = 0.25, seed = 42, na.rm = TRUE, max.overlaps = 15) + #  min.segment.length = 0.3, 
+    #geom_label_repel(fill = "white") +
+    ggtitle(paste0(str_to_title(names(tis_res[i])))) + #, " differentially expressed genes (male vs female)")) +
+    #scale_size_manual(values = sizes) +
+    #scale_color_discrete(name = "Diff. Expr.", labels = c("Downreg", "Non-sig", "Upreg"), type = c("darkblue", "gray", "darkgreen")) +
+    scale_color_manual(values = colors) +
+    #scale_shape_manual(values = c(21, 17)) +
+    #scale_size_manual(values = c(2, 2, 1, 2)) +
+    scale_x_continuous(breaks = seq(-12, 12, 1)) +
+    scale_y_continuous(breaks = seq(0, 60, 1)) +
+    labs(color = "Diff. Expr.") +
+    guides(colour = guide_legend(override.aes = list(alpha = 0.7))) +
+    theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.major = element_line(size = 0.25),
+        panel.grid.minor = element_line(size = 0.1))
+  
+  ggsave(plot = vplots[[i]], paste0(fig_path, names(tis_res[i]), "_volcano_plot.png"), height = 8, width = 10)
+  
+}
+```
+
+```{r}
+v_out <- vplots[[1]] + vplots[[2]] + vplots[[3]] + plot_layout(guides = "collect")
+
+ggsave(plot = v_out, paste0(fig_path, "volcano_plots.png"), height = 6, width = 24)
+```
+
+# goEnrich of DE genes (with expressed genes as gene universe)
+
+```{r}
+rank_set <- lapply(tis_res, function(x) {
+  temp <- x %>% select(gene_name, t) %>% distinct()
+  out <- deframe(temp)
+})
+
+names(rank_set) <- tis
+```
+
+```{r}
+fgsea_res <- lapply(rank_set, function(x) {
+  fgsea(pathways=hallmark, stats=x, nperm=10000) # only 1 (hair) 3 (urine) 5 (buccal) duplicates
+})
+```
+```{r, fig.height=10, fig.width=8}
+fill_colors <- c("<= 0.05" = RColorBrewer::brewer.pal(12, "Paired")[6], "0.05-0.1" = RColorBrewer::brewer.pal(12, "Paired")[5], "> 0.1" = "lightgray")
+#c(RColorBrewer::brewer.pal(12, "Paired")[6], RColorBrewer::brewer.pal(12, "Paired")[5], "lightgray")
+
+out <- lapply(1:length(fgsea_res), function(x) {
+
+  fgsea_res[[x]] %>% 
+  mutate(pathway = gsub(pattern = "HALLMARK_", replacement = "", pathway),
+         "padj_result" = case_when(
+           round(padj, digits = 2) <= 0.05 ~ "<= 0.05",
+           round(padj, digits = 2) > 0.05 & round(padj, digits = 2) <= 0.1 ~ "0.05-0.1",
+           round(padj, digits = 2) > 0.1 ~ "> 0.1"
+         )) %>% 
+  mutate(padj_result = factor(padj_result, levels = c("<= 0.05", "0.05-0.1", "> 0.1"))) %>% 
+  ggplot(aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill = padj_result)) +
+  coord_flip() +
+  labs(x="", y="Normalized Enrichment Score",
+       title= str_to_title(names(fgsea_res[x])), fill = "padj") + 
+  theme_bw() +
+  scale_fill_manual(values = fill_colors) +
+    theme(plot.title = element_text(size = 14),
+                  axis.title = element_text(size = 12),
+                  axis.title.x = element_text(vjust = 0),
+                  axis.title.y = element_blank(),
+                  axis.text = element_text(size = 10),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 12),
+                  legend.text = element_text(size = 10),
+        panel.grid.major = element_line(size = 0.25),
+        panel.grid.minor = element_line(size = 0.1))
+  
+})
+
+names(out) <- tis
+
+for (i in 1:length(out)) {
+  ggsave(out[[i]], filename = paste0(fig_path, names(out[i]), "_hallmark_gsea_barplot.png"), width = 8, height = 10)
+}
+```
+
+```{r, fig.height=10, fig.width=21}
+out_all <- out[[1]] + out[[2]] + out[[3]] + plot_layout(guides = "collect")
+
+ggsave(out_all, filename = paste0(fig_path, "alltis_hallmark_gsea_barplot.png"), width = 21, height = 10)
+```
+
+
+# Volcano + FGSEA
+
+```{r}
+buc <- vplots[[1]] + out[[1]] + plot_layout(widths = c(2,1))
+
+ggsave(buc, filename = paste0(fig_path, "buccal_volcano_fgsea.pdf"), useDingbats = FALSE, width = 15.5, height = 7)
+```
+
+```{r}
+hair <- vplots[[2]] + out[[2]] + plot_layout(widths = c(2,1))
+
+ggsave(hair, filename = paste0(fig_path, "hair_volcano_fgsea.pdf"), useDingbats = FALSE, width = 15.5, height = 7)
+```
+
+```{r}
+urine <- vplots[[3]] + out[[3]] + plot_layout(widths = c(2,1))
+
+ggsave(urine, filename = paste0(fig_path, "urine_volcano_fgsea.pdf"), useDingbats = FALSE, width = 15.5, height = 7)
+```
+
+
+
+
+
+
+
+
+
+
+# pi1 estimate from GTEx
+
+
+```{r}
+
+
+
+
+pi1 <- 1 - pi0est(tis_res[[3]]$P.Value, lambda = 0.5, pi0.method = "smoother", smooth.log.pi0 = TRUE)$pi0
+
+gkidney <- gtex_sel %>% filter(tissue == "Kidney_Cortex") %>% pull(gene)
+
+pi1_gtex <- 1 - pi0est(tis_res[[3]][rownames(tis_res[[3]]) %in% gkidney,]$P.Value, lambda = 0.5, pi0.method = "smoother", smooth.log.pi0 = TRUE)$pi0
+
+
+hist(tis_res[[3]]$P.Value)
+```
+
+
+
+
+```{r}
+hist(tis_res[[3]][rownames(tis_res[[3]]) %in% gkidney,]$P.Value)
+
+nrow(tis_res[[3]])
+```
+
+
+
+
+
+
+
+
+
+
+

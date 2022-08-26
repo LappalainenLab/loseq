@@ -1,0 +1,67 @@
+diseaseId	name	datasourceId	targetId	score
+EFO_0000249	Alzheimer's disease	uniprot_literature	ENSG00000113758	0.5
+EFO_0000249	Alzheimer's disease	uniprot_literature	ENSG00000137642	0.5
+EFO_0000249	Alzheimer's disease	uniprot_literature	ENSG00000064687	1
+EFO_0000249	Alzheimer's disease	uniprot_literature	ENSG00000142192	1
+EFO_0000249	Alzheimer's disease	uniprot_literature	ENSG00000198763	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000172456	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000100285	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000204843	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000134014	0.5
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000137601	1
+EFO_0000253	amyotrophic lateral sclerosis	uniprot_literature	ENSG00000135406	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000133048	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000175497	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000172057	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000149451	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000168229	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000090376	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000187258	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000213047	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000146070	1
+EFO_0000270	asthma	uniprot_literature	ENSG00000171195	1
+EFO_0000274	atopic eczema	uniprot_literature	ENSG00000143631	1
+EFO_0000274	atopic eczema	uniprot_literature	ENSG00000146070	1
+EFO_0000537	hypertension	uniprot_literature	ENSG00000135744	1
+EFO_0000537	hypertension	uniprot_literature	ENSG00000124212	1
+EFO_0000676	psoriasis	uniprot_literature	ENSG00000141527	1
+EFO_0000676	psoriasis	uniprot_literature	ENSG00000204525	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000159640	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000198734	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000180210	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000113520	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000177000	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000027075	1
+EFO_0000712	stroke	uniprot_literature	ENSG00000174175	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000244731	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000172575	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000163599	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000153064	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000213918	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000224389	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000188389	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000128604	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000169896	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000134242	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000117322	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000072694	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000233312	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000117586	1
+EFO_0002690	systemic lupus erythematosus	uniprot_literature	ENSG00000138378	1
+EFO_0003767	inflammatory bowel disease	uniprot_literature	ENSG00000237693	1
+EFO_0003767	inflammatory bowel disease	uniprot_literature	ENSG00000163362	1
+EFO_0003767	inflammatory bowel disease	uniprot_literature	ENSG00000128604	1
+EFO_0003767	inflammatory bowel disease	uniprot_literature	ENSG00000085978	1
+EFO_0003767	inflammatory bowel disease	uniprot_literature	ENSG00000162594	1
+EFO_0003882	osteoporosis	uniprot_literature	ENSG00000102024	1
+EFO_0003882	osteoporosis	uniprot_literature	ENSG00000108821	1
+EFO_0003882	osteoporosis	uniprot_literature	ENSG00000125084	1
+EFO_0003882	osteoporosis	uniprot_literature	ENSG00000162337	1
+EFO_0003882	osteoporosis	uniprot_literature	ENSG00000205213	1
+EFO_0003885	multiple sclerosis	uniprot_literature	ENSG00000081237	1
+EFO_0003885	multiple sclerosis	uniprot_literature	ENSG00000272398	1
+EFO_0003885	multiple sclerosis	uniprot_literature	ENSG00000196126	1
+EFO_0003885	multiple sclerosis	uniprot_literature	ENSG00000067182	1
+EFO_0003885	multiple sclerosis	uniprot_literature	ENSG00000168685	1

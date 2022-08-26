@@ -1,0 +1,39 @@
+diseaseId	name	datasourceId	targetId	score
+EFO_0000249	Alzheimer's disease	genomics_england	ENSG00000010704	1
+EFO_0000249	Alzheimer's disease	genomics_england	ENSG00000159640	1
+EFO_0000249	Alzheimer's disease	genomics_england	ENSG00000159640	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000214274	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000214274	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000112367	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000124164	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000112367	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000165280	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000184402	0.5
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000124164	0.5
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000165280	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000112367	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000165280	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000127824	0.5
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000165280	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000112367	1
+EFO_0000253	amyotrophic lateral sclerosis	genomics_england	ENSG00000124164	1
+EFO_0000537	hypertension	genomics_england	ENSG00000144891	1
+EFO_0000537	hypertension	genomics_england	ENSG00000144891	1
+EFO_0000537	hypertension	genomics_england	ENSG00000135744	1
+EFO_0000537	hypertension	genomics_england	ENSG00000144891	0.5
+EFO_0000537	hypertension	genomics_england	ENSG00000135744	1
+EFO_0000676	psoriasis	genomics_england	ENSG00000141527	1
+EFO_0000676	psoriasis	genomics_england	ENSG00000141527	1
+EFO_0000676	psoriasis	genomics_england	ENSG00000141527	1
+EFO_0000676	psoriasis	genomics_england	ENSG00000141527	1
+EFO_0002690	systemic lupus erythematosus	genomics_england	ENSG00000213689	1
+EFO_0002690	systemic lupus erythematosus	genomics_england	ENSG00000213689	1
+EFO_0003086	kidney disease	genomics_england	ENSG00000158163	1
+EFO_0003086	kidney disease	genomics_england	ENSG00000158163	1
+EFO_0003086	kidney disease	genomics_england	ENSG00000158163	1
+EFO_0003882	osteoporosis	genomics_england	ENSG00000162337	1
+EFO_0003882	osteoporosis	genomics_england	ENSG00000108821	0.5
+EFO_0003882	osteoporosis	genomics_england	ENSG00000108821	1
+EFO_0003882	osteoporosis	genomics_england	ENSG00000108821	0.5

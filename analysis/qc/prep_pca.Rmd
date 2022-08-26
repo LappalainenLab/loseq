@@ -1,0 +1,351 @@
+---
+title: "Prep PCA"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_tpms.txt"
+
+out_path <- "analysis/qc/"
+fig_path <- here("analysis/qc/figs/prep_pca_")
+
+tis <- c("buccal", "hair", "hek", "saliva", "urine")
+```
+
+# Functions
+
+```{r}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+```
+
+# Filter counts - SKIP
+
+```{r}
+# filt <- lapply(tis, function(x) {
+#   
+#   cts_tis <- cts[, colnames(cts) %in% meta_seq[meta_seq$tissue == x,]$group_name]
+#   tpms_tis <- tpms[, colnames(cts) %in% meta_seq[meta_seq$tissue == x,]$group_name]
+#   
+#   out <- filter_counts(raw_cts = cts_tis, tpm_cts = tpms_tis, raw_threshold = 8)
+#   
+# })
+# 
+# filt <- lapply(filt, function(x) {
+#   lapply(x, function(y) {y %>% rownames_to_column("gene_ids")})
+# })
+# 
+# cts_filt <- lapply(filt, "[[", 1)
+# tpms_filt <- lapply(filt, "[[", 2)
+#   
+# cts_filt <- Reduce(function(x, y) {merge(x = x, y = y, by = "gene_ids")}, cts_filt) # 4152 genes
+# cts_filt <- cts_filt %>% column_to_rownames("gene_ids")
+# 
+# tpms_filt <- Reduce(function(x, y) {merge(x = x, y = y, by = "gene_ids")}, tpms_filt)
+# tpms_filt <- tpms_filt %>% column_to_rownames("gene_ids")
+```
+
+```{r}
+#test <- include_raw(x = cts, counts = 8) # includes 2x the # of genes, less stringent to filter across tissues?
+```
+
+
+# Normalize counts
+
+```{r}
+meta_sel <- meta_seq %>% select(group_name, tissue, prep, donor_id) %>% 
+  filter(group_name %in% colnames(cts))
+
+meta_sel <- meta_sel %>% column_to_rownames("group_name")
+
+out <- dds_norm(raw_cts = cts, key_df = meta_sel, dds_design = c("~1", "tissue", "prep"))
+
+list2env(out, envir = .GlobalEnv)
+```
+
+# PCA
+
+```{r}
+rv <- rowVars(assay(vsd))
+select <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))] # select top 500 most variable genes
+```
+
+```{r}
+pca <- prcomp(t(assay(vsd)[select,]), center = TRUE, scale. = TRUE)
+
+d <- pca$x # pulls PC dataframe
+
+percentVar <- round(pca$sdev^2/sum(pca$sdev^2), digits =3)
+```
+
+```{r}
+d <- merge(d, meta_sel, by = 0)
+```
+
+
+# Plot PCA
+
+Variance explained:
+
+```{r}
+pvar <- as.data.frame(percentVar)
+pvar <- pvar %>% rownames_to_column("PC_num") %>% mutate(PC_num = as.numeric(PC_num))
+
+(v <- pvar %>% 
+  filter(PC_num <= 10) %>% 
+  ggplot(aes(x = PC_num, y = percentVar*100)) +
+      labs(x = "Expression PC",
+           title = "Variance Explained",
+           y = "Percent") +
+      geom_line() +
+      geom_point(pch = 21, fill = "white") +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(0,20,1)) +
+  theme(panel.grid.minor = element_blank()) +
+  scale_y_continuous(breaks = seq(0, 60, 10)))
+
+ggsave(filename = paste0(fig_path, "percentVar.png"), plot = v)
+```
+
+Tissue PCA:
+
+```{r}
+pt <- d %>% ggplot(aes(x = PC1, y = PC2, color = tissue)) +
+  geom_point(size = 1, alpha = 0.5) +
+  xlab(paste0("PC1: ", percentVar[1]*100, "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2]*100, "% variance")) +
+  theme_bw() +
+  scale_colour_manual(name = "tissue", values = myColors, drop = TRUE) +
+  stat_ellipse(level = 0.95)
+
+ggsave(filename = paste0(fig_path, "PC1_PC2_tissue.png"), plot = pt)
+```
+
+Prep PCA:
+
+```{r}
+pp <- d %>% ggplot(aes(x = PC1, y = PC2)) +
+  geom_point(aes(color = prep), size = 1, alpha = 0.5) +
+  stat_ellipse(aes(color = tissue), level = 0.95) +
+  xlab(paste0("PC1: ", percentVar[1]*100, "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2]*100, "% variance")) +
+  theme_bw() +
+  scale_colour_manual(name = "prep", values = prep_colors, drop = TRUE)
+
+ggsave(filename = paste0(fig_path, "PC1_PC2_prep.png"), plot = pp)
+```
+
+Adjusted r^2 plots:
+
+```{r}
+pc_num <- 10
+pval_thresh <- 0.05/pc_num
+```
+
+```{r}
+# res <- data.frame(pc = 1:pc_num,
+#                   adjr2 = NA,
+#                   pval = NA,
+#                   stringsAsFactors = F)
+# 
+# for (i in 1:nrow(res)) {
+#   m <- lm(d[, (i+1)] ~ as.factor(meta_sel$tissue))
+#   pval <- pf(summary(m)$fstatistic[1], 
+#              df1 = summary(m)$fstatistic[2], 
+#              df2 = summary(m)$fstatistic[3], 
+#              lower.tail = FALSE)
+#   res[i, 2:3] <- c(summary(m)$adj.r.squared, pval)
+# }
+# 
+# res <- res %>% mutate(sig = ifelse(pval <= pval_thresh, TRUE, FALSE),
+#                       adjr2 = round(adjr2, digits = 2))
+# 
+# r2_t <- ggplot(res, aes(x = pc, y = adjr2, color = sig)) +
+#   labs(title = "Tissue",
+#        x = "Expression PC",
+#        y = "Adj. R2",
+#        color = "Significant") +
+#   geom_point(aes(color = sig)) +
+#   scale_x_continuous(breaks = 1:20) +
+#   scale_y_continuous(limits = c(0,1)) +
+#   theme_bw() +
+#   theme(panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank()) +
+#   scale_color_manual(values = c("black", "indianred"), drop = TRUE)
+# 
+# ggsave(filename = paste0(fig_path, "adjr2_tissue.png"), plot = r2_t)
+```
+
+```{r}
+# res <- data.frame(pc = 1:pc_num,
+#                   adjr2 = NA,
+#                   pval = NA,
+#                   stringsAsFactors = F)
+# 
+# for (i in 1:nrow(res)) {
+#   m <- lm(d[, (i+1)] ~ as.factor(meta_sel$prep))
+#   pval <- pf(summary(m)$fstatistic[1],
+#              df1 = summary(m)$fstatistic[2],
+#              df2 = summary(m)$fstatistic[3],
+#              lower.tail = FALSE)
+#   res[i, 2:3] <- c(summary(m)$adj.r.squared, pval)
+# }
+# 
+# res <- res %>% mutate(sig = ifelse(pval <= pval_thresh, TRUE, FALSE),
+#                       adjr2 = round(adjr2, digits = 2))
+# 
+# r2_p <- ggplot(res, aes(x = pc, y = adjr2, color = sig)) +
+#   labs(title = "Prep",
+#        x = "Expression PC",
+#        y = "Adj. R2",
+#        color = "Significant") +
+#   geom_point(aes(color = sig)) +
+#   scale_x_continuous(breaks = 1:20) +
+#   scale_y_continuous(limits = c(0,1)) +
+#   theme_bw() +
+#   theme(panel.grid.major = element_blank(),
+#         panel.grid.minor = element_blank()) +
+#   scale_color_manual(values = c("black", "indianred"))
+# 
+# ggsave(filename = paste0(fig_path, "adjr2_prep.png"), plot = r2_p)
+```
+
+
+```{r}
+res <- data.frame(pc = 1:pc_num,
+                  tissue = NA,
+                  prep = NA,
+                  #donor_id = NA,
+                  stringsAsFactors = F)
+
+#as.factor(meta_sel$extraction_number) # this is correlated with tissue
+#+ meta_sel$mean_3_bias # this is generally correlated with tissue, and I want an even # of vars :D..
+
+for (i in 1:nrow(res)) {
+  m <- lm(d[, (i+1)] ~ as.factor(meta_sel$tissue) + as.factor(meta_sel$prep))
+  a <- anova(m)
+  res[i, 2:3] <- c(a$`Pr(>F)`[1], a$`Pr(>F)`[2])
+}
+
+res <- res %>% 
+  pivot_longer(cols = tissue:prep, names_to = "variable", values_to = "pval") %>% 
+  mutate(sig = ifelse(pval <= pval_thresh, TRUE, FALSE),
+         variable = factor(variable, levels = c("tissue", "prep")))
+
+(r2 <- ggplot(res, aes(x = pc, y = -log(pval, base = 10), color = sig)) +
+  labs(x = "Expression PC",
+       y = "-log10(p-value)",
+       color = "Significant") +
+  ggtitle("PC ~ tissue + prep") +
+  geom_point(aes(color = sig)) +
+  scale_x_continuous(breaks = 1:20) +
+  #scale_y_continuous(limits = c(0,1)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_color_manual(values = c("black", "indianred"), drop = TRUE) +
+  facet_wrap(~variable, nrow = 1))
+
+ggsave(filename = paste0(fig_path, "tis_prep_anova.png"), plot = r2)
+```
+
+
+```{r}
+t <- res %>% 
+  filter(variable == "tissue") %>% 
+  ggplot(aes(x = pc, y = -log(pval, base = 10), color = sig)) +
+  labs(x = "Expression PC",
+       y = "-log10(p-value)",
+       color = "Significant") +
+  ggtitle("Tissue") +
+  geom_point(aes(color = sig)) +
+  scale_x_continuous(breaks = 1:20) +
+  #scale_y_continuous(limits = c(0,1)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_color_manual(values = c("black", "indianred"), drop = TRUE) +
+  scale_y_continuous(breaks = seq(0,300,50), limits = c(0,300))
+
+p <- res %>% 
+  filter(variable == "prep") %>% 
+  ggplot(aes(x = pc, y = -log(pval, base = 10), color = sig)) +
+  labs(x = "Expression PC",
+       y = "-log10(p-value)",
+       color = "Significant") +
+  ggtitle("Prep") +
+  geom_point(aes(color = sig)) +
+  scale_x_continuous(breaks = 1:20) +
+  #scale_y_continuous(limits = c(0,1)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_color_manual(values = c("black", "indianred"), drop = TRUE) +
+  scale_y_continuous(breaks = seq(0,300,50), limits = c(0,300))
+```
+
+All plots:
+
+```{r}
+all <- (pt + pp + plot_layout(guides = "collect")) / (v + t + p + plot_layout(guides = "collect", widths = c(2,1,1))) + plot_layout(heights = c(2,1)) + theme_bw() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+
+ggsave(filename = paste0(fig_path, "all_figs.png"), plot = all, height = 5, width = 7.25)
+
+ggsave(filename = paste0(fig_path, "all_figs.pdf"), plot = all, height = 5, width = 7.25, useDingbats = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

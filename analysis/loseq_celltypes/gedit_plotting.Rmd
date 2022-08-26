@@ -1,0 +1,386 @@
+---
+title: "GEDIT Plotting"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+library(pheatmap)
+library(RColorBrewer)
+library(ComplexHeatmap)
+```
+
+# Inputs
+
+```{r}
+#res_path <- "analysis/loseq_celltypes/results/loseq5mil_bluecode_collapsed_cells.txt"
+res_path <- "analysis/loseq_celltypes/results/loseq2_5mil_thresh_bluecode_collapsed_cells.txt"
+full_res_path <- "analysis/loseq_celltypes/results/loseq2_5mil_thresh_bluecode.tsv"
+
+meta_seq_path <- "data/samplekey_485.txt"
+
+out_path <- "analysis/loseq_celltypes/"
+fig_path <- here("analysis/loseq_celltypes/figs/bluecode_") # set prefix to whatever reference was used
+
+tis <- c("buccal", "hair", "saliva", "urine") # no hek
+```
+
+# Functions
+
+```{r}
+source(here("src/base_functions.R"))
+```
+
+# Read in data
+
+```{r, warning=FALSE}
+res <- fread(here(res_path), data.table = FALSE)
+res_full <- fread(here(full_res_path), data.table = FALSE) %>% dplyr::rename("group_name" = "V1",
+                                                                             "T.cell.CD4" = "T.Cell.CD4")
+
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+source(here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+```
+
+# Format
+
+```{r}
+res <- res %>% pivot_longer(cols = Chondrocyte:Myocyte, names_to = "cell_type", values_to = "proportion")
+```
+
+```{r}
+#top_samps <- meta_seq %>% filter(highest_p_depth_samp == TRUE) %>% pull(group_name)
+
+meta_seq <- meta_seq %>% filter(group_name %in% res$group_name,
+                                prep == "loseq")
+sel <- meta_seq %>% select(group_name, tissue, prep, collection_number, donor_id)
+
+res <- merge(res, sel, by = "group_name")
+
+#res <- res %>% filter(prep == "loseq")
+```
+
+```{r}
+res <- res %>% group_by(donor_id, tissue, cell_type, collection_number) %>% summarise(proportion = mean(proportion)) # collapses technical replicates
+```
+
+```{r}
+res_full$group_name <- gsub(res_full$group_name, pattern = "\\.", replacement = "-")
+
+res_full <- res_full %>% pivot_longer(cols = Chondrocyte.articular:T.cell.CD8.memory, names_to = "cell_type", values_to = "proportion")
+
+res_full <- res_full %>% separate(col = "cell_type", into = c("cell_type_category"), sep = "\\.", remove = FALSE, extra = "drop")
+
+res_full <- res_full %>% 
+  mutate(cell_type_category = ifelse(cell_type_category == "B", "B.cell", cell_type_category),
+         cell_type_category = ifelse(cell_type_category == "T", "T.cell", cell_type_category),
+         cell_type_category = ifelse(cell_type_category == "NK", "NK.cell", cell_type_category),
+         cell_type_category = ifelse(cell_type_category == "Hair", "Epithelial", cell_type_category),
+         cell_type_category = ifelse(cell_type_category == "Mature", "Neutrophil", cell_type_category),
+         cell_type_category = ifelse(cell_type_category %in% c("Myometrial", "Smooth"), "Myocyte", cell_type_category))
+
+res_full <- merge(res_full, sel, by = "group_name")
+#res_full <- res_full %>% filter(prep == "loseq")
+```
+
+
+# Boxplot of all proportions
+
+```{r}
+box <- res %>% 
+  mutate(cell_type = tolower(cell_type)) %>% 
+  #filter(group_name %in% top_samps) %>% 
+  ggplot(aes(x = tidytext::reorder_within(x = cell_type, by = -proportion, FUN = median, within = tissue), y = proportion, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA) +
+  #geom_jitter(size = 1, width = 0.2) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "none") +
+  scale_fill_manual(values = myColors) +
+  scale_y_continuous(breaks = seq(0,0.4,0.05)) +
+  tidytext::scale_x_reordered() +
+  xlab("Cell types") +
+  facet_wrap(~tissue, nrow = 1, scales = "free_x") +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+
+ggsave(filename = paste0(fig_path, "alltis_boxplot.png"), plot = box, width = 8, height  = 3.5)
+```
+
+# Heatmap of median proportions
+
+```{r}
+mat <- res %>% 
+  #filter(group_name %in% top_samps) %>% 
+  mutate(cell_type = tolower(cell_type)) %>% 
+  group_by(tissue, cell_type) %>% 
+  summarise(med = median(proportion)) %>% 
+  pivot_wider(names_from = cell_type, values_from = med) %>% 
+  column_to_rownames("tissue")
+```
+```{r}
+my_sample_row <- data.frame(row.names = tis, "tissue" = tis)
+my_sample_colors <- list("tissue" = myColors)
+
+h <- pheatmap(t(mat),
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         annotation_col = my_sample_row, drop_levels = TRUE, 
+         annotation_colors = my_sample_colors,
+         col=colorRampPalette(brewer.pal(9, "Blues"))(length(seq(0,0.4,0.01))),
+         breaks=seq(0,0.4,0.01), 
+         main = "Median\nproportion", 
+         # border_color = NA,
+         cluster_cols = TRUE, cluster_rows = TRUE, treeheight_row = 15, treeheight_col = 15, clustering_distance_rows = "euclidean",
+         cellwidth = 20,
+         cellheight = 20, 
+         fontsize = 10, fontsize_col = 12, number_color = "black",
+         na_col = "light grey", display_numbers = TRUE)
+
+ggsave(filename = paste0(fig_path, "med_heatmap.png"), plot = h, height = 5, width = 4)
+```
+
+```{r}
+col_test=colorRampPalette(brewer.pal(9, "Blues"))(length(seq(0,1,0.1)))
+
+pdf(file = paste0(fig_path, "med_heatmap-complex.pdf"), height = 7, width = 5)
+
+Heatmap(t(as.matrix(mat)),
+        col=col_test[1:length(col_test)/1.25],
+        column_title = "Median Cell Type Proportion",
+        rect_gp = gpar(col = "white", lwd = 2), 
+        border = "black",
+        cluster_columns = TRUE,
+        heatmap_height = unit(1, "cm")*nrow(t(mat)),
+        heatmap_width = unit(1, "cm")*nrow(t(mat))*0.5,
+        column_km = 3,
+        column_km_repeats = 10,
+        show_parent_dend_line = FALSE,
+        clustering_distance_rows = "euclidean",
+        clustering_distance_columns = "euclidean",
+        row_names_gp = gpar(fontsize = 12),
+        column_names_gp = gpar(col = c(myColors[c("buccal", "hair", "saliva", "urine")]), fontsize = 12),
+        heatmap_legend_param = list(title = "Proportion"),
+        cell_fun = function(j, i, x, y, width, height, fill) {
+        grid.text(sprintf("%.2f", t(mat)[i, j]), x, y, gp = gpar(col = "black", fontsize = 10))
+})
+
+dev.off()
+```
+
+
+# Cross-collection plot
+
+```{r}
+thresh <- res %>% 
+  group_by(tissue) %>% 
+  mutate(quant75 = quantile(x = proportion, probs = 0.75)) %>% 
+  select(tissue, quant75) %>% 
+  distinct() %>% 
+  pivot_wider(names_from = tissue, values_from = quant75) %>% as.list()
+
+cells <- c()
+
+for (i in 1:length(thresh)) {
+  
+  tis_df <- res %>% filter(tissue == names(thresh[i]))
+  
+  temp <- tis_df %>% group_by(cell_type) %>% 
+    summarise(med = median(proportion)) %>% 
+    filter(med >= thresh[[i]]) %>% 
+    pull(cell_type)
+  
+  cells <- c(cells, temp)
+  
+}
+
+cells <- unique(unlist(cells))
+```
+
+ALL TISSUES AND COLLECTIONS:
+
+```{r}
+donor_labs <- paste0("donor", seq(1, length(unique(res$donor_id)), 1))
+names(donor_labs) <- unique(res$donor_id)
+
+c_all <- res %>% 
+  filter(cell_type %in% cells) %>% 
+  mutate(cell_type = tolower(cell_type)) %>% 
+  ggplot(aes(x = collection_number, y = proportion, color = reorder(cell_type, -proportion, FUN = "median"))) +
+  geom_line() +
+  theme_bw() +
+  #theme(panel.grid = element_blank()) +
+  theme(legend.position = "top") +
+  labs(color = "Cell types",
+       x = "Collection Number") +
+  scale_color_manual(values = brewer.pal(n = length(cells), name = "Set1")) +
+  facet_grid(tissue ~ donor_id, labeller = labeller(donor_id = donor_labs)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.major = element_line(size = 0.2),
+        panel.grid.minor = element_line(size = 0.1))
+
+ggsave(filename = paste0(fig_path, "cross_collection_all.png"), plot = c_all, width = 15, height = 8)
+ggsave(filename = paste0(fig_path, "cross_collection_all.pdf"), plot = c_all, width = 15, height = 8, useDingbats = FALSE)
+```
+
+ONLY TISSUES/DONORS WITH COMPLETE 4 COLLECTIONS
+
+```{r}
+donors <- res %>% filter(tissue %in% c("buccal", "hair", "urine")) %>% 
+  group_by(donor_id, tissue) %>% 
+  summarise(n = n()) %>%
+  filter(n == 56) %>% # 14 cell types * 4 collections * 3 tissues (hair, urine, buccal) = 168
+  ungroup() %>% 
+  group_by(donor_id) %>% 
+  summarise(n = n()) %>% 
+  filter(n == 3) %>% 
+  pull(donor_id)
+```
+
+
+```{r}
+
+donor_labs <- paste0("donor", seq(1, length(unique(res$donor_id)), 1))
+names(donor_labs) <- unique(res$donor_id)
+donor_labs <- donor_labs[donors]
+
+# sex_df <- meta_seq %>% select(donor_id, sex) %>% filter(donor_id %in% donors) %>% distinct() %>% mutate(sex = ifelse(sex == "m", "Male", "Female"))
+# sex_labs <- sex_df$sex
+# names(sex_labs) <- sex_df$donor_id # THERE ARE ONLY MEN LEFT
+
+c <- res %>% 
+  filter(cell_type %in% cells,
+         tissue %in% c("buccal", "hair", "urine"),
+         donor_id %in% donors) %>% 
+  mutate(cell_type = tolower(cell_type)) %>% 
+  ggplot(aes(x = collection_number, y = proportion, color = reorder(cell_type, -proportion, FUN = "median"))) +
+  geom_line() +
+  theme_bw() +
+  #theme(panel.grid = element_blank()) +
+  theme(legend.position = "top") +
+  labs(color = "Cell types",
+       x = "Collection Number") +
+  scale_color_manual(values = brewer.pal(n = length(cells), name = "Set1")) +
+  scale_y_continuous(breaks = seq(0, 0.3, 0.1)) +
+  facet_grid(tissue ~ donor_id, labeller = labeller(donor_id = donor_labs)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.1))
+
+ggsave(filename = paste0(fig_path, "cross_collection_complete_collections.png"), plot = c, width = 7.5, height = 4.5)
+```
+
+```{r}
+c <- res %>% 
+  filter(cell_type %in% cells,
+         tissue %in% c("buccal", "hair", "urine"),
+         donor_id %in% donors) %>% 
+  mutate(cell_type = tolower(cell_type)) %>% 
+  ggplot(aes(x = collection_number, y = proportion, color = reorder(cell_type, -proportion, FUN = "median"))) +
+  geom_line(size = 0.5) +
+  geom_point(size = 0.5) +
+  theme_bw() +
+  #theme(panel.grid = element_blank()) +
+  theme(legend.position = "top") +
+  labs(color = "Cell types",
+       x = "Collection Number") +
+  scale_color_manual(values = brewer.pal(n = length(cells), name = "Set1")) +
+  scale_y_continuous(breaks = seq(0, 0.3, 0.1)) +
+  facet_grid(tissue ~ donor_id, labeller = labeller(donor_id = donor_labs)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.minor = element_line(size = 0.1),
+        panel.grid.major = element_line(size = 0.2))
+
+ggsave(filename = paste0(fig_path, "cross_collection_complete_collections_ai.pdf"), plot = c, width = 10, height = 6)
+```
+
+
+# Full results stacked barplot
+
+```{r}
+cell_colors <- colorRampPalette(brewer.pal(12, "Set3"))(length(unique(res_full$cell_type)))
+
+bar <- res_full %>% 
+  group_by(tissue, cell_type, cell_type_category) %>% 
+  summarise(med = median(proportion)) %>% 
+  ggplot(aes(x = cell_type_category, y = med, fill = cell_type)) +
+  geom_bar(position = "stack", stat = "identity") +
+  theme_bw() +
+  theme(legend.position = "right",
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12)) +
+  facet_wrap(~tissue, ncol = 1) +
+  ylab("Median Proportion") +
+  xlab("Cell Type Category") +
+  scale_fill_manual(values = cell_colors)
+
+ggsave(filename = paste0(fig_path, "med_stacked_barplot.png"), plot = bar, height = 10, width = 16)
+ggsave(filename = paste0(fig_path, "med_stacked_barplot.pdf"), plot = bar, height = 10, width = 16, useDingbats = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

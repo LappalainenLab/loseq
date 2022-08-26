@@ -1,0 +1,235 @@
+---
+title: "Variance partition across tissues"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+library(variancePartition)
+library(ComplexHeatmap)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_downsampled2500000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_downsampled2500000_tpms.txt"
+
+out_path <- "analysis/loseq_variance/"
+fig_path <- here("analysis/loseq_variance/figs/vp_across_tis_")
+
+tis <- c("buccal", "hair", "urine")
+gene_num <- 500 # same as cross tissue PCA
+```
+
+# Functions
+
+```{r, echo=FALSE, warning=FALSE}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+```
+
+# Variables of interest
+
+```{r}
+#fixed <- c("r_rna_rate", "mapping_rate", "duplicate_rate_of_mapped_excluding_globins", "p_exons_total", "tin_mean", "mean_3_bias", "rna_conc_nd", "a260_280", "cdna_avesize", "cdna_conc", "lib_avesize", "lib_molarity", "gc_content_r1")
+
+fixed <- c("r_rna_rate", "mapping_rate", "duplicate_rate_of_mapped_excluding_globins", "exonic_rate", "mean_3_bias", "rna_conc_nd", "a260_280", "cdna_avesize", "gc_content_r1")
+
+random <- c("collection_number", "donor_id", "tissue") # removed "sex" because correlated strongly with donor_id, removed extraction number for cross-tissue because highly correlated with tissue "extraction_number", 
+
+#labels <- c("Residuals", "rRNA Rate", "Mapping Rate", "Duplicate Rate", "Exonic Rate", "Mean TIN", "Mean 3' bias", "RNA ng/uL", "A260/280", "cDNA Ave Size", "cDNA ng/uL", "Library Ave Size", "Library nmol", "GC Content", "Collection Number", "Extraction Number", "Donor ID", "Tissue")
+
+labels <- c("Residuals", "rRNA Rate", "Mapping Rate", "Duplicate Rate", "Exonic Rate", "Mean 3' bias", "RNA ng/uL", "A260/280", "cDNA Ave Size", "GC Content", "Collection Number", "Donor ID", "Tissue") # "Extraction Number", 
+
+names(labels) <- c("Residuals", fixed, random)
+```
+
+# Define formula
+
+```{r}
+random_form <- paste0("(1 | ", random, ")", collapse = " + ")
+fixed_form <- paste0(fixed, collapse = " + ")
+
+form <- as.formula(paste("~ ", random_form, " + ", fixed_form))
+```
+
+
+# Analysis
+
+# Select, scale, and center all continuous (fixed) variables of interest
+
+```{r}
+meta_sel <- meta_seq %>% filter(tissue %notin% c("hek", "saliva"), 
+                                prep == "loseq", 
+                                group_name %in% colnames(cts))
+
+meta_sel <- meta_sel[, colnames(meta_sel) %in% c("group_name", random, fixed)]
+
+meta_sel[,random] <- lapply(meta_sel[,random], factor)
+
+meta_sel[,fixed] <- lapply(meta_sel[,fixed], scale)
+```
+
+# Normalize and select most variable genes per tissue
+
+Need to reorder raw columns so match meta group_name rows:
+
+```{r}
+cts <- cts[, colnames(cts) %in% meta_sel$group_name]
+meta_sel <- meta_sel %>% column_to_rownames("group_name")
+
+ord <- match(rownames(meta_sel), colnames(cts))
+cts <- cts[,ord]
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = round(cts),
+                              colData = meta_sel,
+                              design = ~ tissue)
+
+dds <- estimateSizeFactors(dds)
+dds <- vst(dds)
+
+rv <- rowVars(assay(dds))
+select <- order(rv, decreasing = TRUE)[seq_len(min(gene_num, length(rv)))] # select for most variable
+
+dds <- assay(dds)[select,]
+```
+
+# Variance Partition
+
+```{r}
+vp <- fitExtractVarPartModel(dds, form, meta_sel)
+```
+
+# Plot results
+
+```{r}
+vp <- vp[, names(labels)]
+colnames(vp) <- labels
+vp <- as.matrix(vp)
+```
+
+```{r}
+mean <- colMeans(vp)
+out <- as.data.frame(mean)
+out <- out %>% 
+  rownames_to_column("variable") %>% 
+  mutate("sd" = round(apply(X = vp, MARGIN = 2, FUN = "sd"), digits = 2),
+         mean = round(mean, digits = 2)) %>% 
+  mutate("CI_high" = round((mean + sd), digits = 2),
+         "CI_low" = round((mean - sd), digits = 2))
+```
+
+```{r}
+fig <- out %>% 
+    ggplot(aes(x = reorder(variable, mean), y = mean)) +
+    geom_point() +
+    geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0, position = position_dodge(0.9)) +
+    scale_y_continuous(breaks = seq(-0.1,1,0.1), limits = c(-0.05,1)) +
+    coord_flip() +
+    #ylab("") +
+    #xlab("") +
+    ylab("Variance Explained (mean +/- sd)") +
+    xlab("Variable") +
+    ggtitle("Cross-tissue gene expression variance") +
+    theme_bw() +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+  
+ggsave(plot = fig, paste0(fig_path, "all.png"), height = 4.5, width = 5.5)
+#write.table(out, file = here("analysis/final_figs/inputs/fig2_MAIN_cross_tis_vp.txt"), sep = "\t")
+```
+
+
+# CCA of input variables
+
+Need to set up formula without ~ (1|x) i.e. random variable format (CCA will still intake random variables).
+
+```{r}
+random_cca <- paste0(random, collapse = " + ")
+fixed_cca <- paste0(fixed, collapse = " + ")
+
+cca_form <- as.formula(paste("~ ", random_cca, " + ", fixed_cca))
+
+cca_res <- canCorPairs(cca_form, meta_sel)
+```
+
+```{r}
+# Plot correlation matrix
+
+col_test=colorRampPalette(RColorBrewer::brewer.pal(9, "Blues"))(length(seq(0,1,0.1)))
+
+rownames(cca_res) <- c("Collection number", "Donor ID", "Tissue", "rRNA rate", "Mapping rate", "Duplicate rate", "Exonic rate", "Mean 3' Bias", "RNA yield", "A260/280", "cDNA avesize", "GC content")
+
+colnames(cca_res) <- c("Collection number", "Donor ID", "Tissue", "rRNA rate", "Mapping rate", "Duplicate rate", "Exonic rate", "Mean 3' Bias", "RNA yield", "A260/280", "cDNA avesize", "GC content")
+
+pdf(file = paste0(fig_path, "cca_heatmap-complex.pdf"), height = 5, width = 6)
+
+Heatmap(as.matrix(cca_res),
+        col=col_test[1:length(col_test)/1.25],
+        column_title = "CCA of Cross-tissue Variables",
+        rect_gp = gpar(col = "white", lwd = 2), 
+        border = "black",
+        cluster_columns = TRUE,
+        #heatmap_height = unit(1, "cm")*nrow(t(mat)),
+        #heatmap_width = unit(1, "cm")*nrow(t(mat))*0.5,
+        #column_km = 3,
+        #column_km_repeats = 10,
+        #show_parent_dend_line = FALSE,
+        #clustering_distance_rows = "euclidean",
+        #clustering_distance_columns = "euclidean",
+        row_names_gp = gpar(fontsize = 12),
+        column_names_gp = gpar(fontsize = 12),
+        heatmap_legend_param = list(title = "Corr"),
+        #cell_fun = function(j, i, x, y, width, height, fill) {
+        #grid.text(sprintf("%.2f", cca_res[i, j]), x, y, gp = gpar(col = "black", fontsize = 10))
+#}
+)
+
+dev.off()
+```
+
+
+
+
+
+
+
+
+

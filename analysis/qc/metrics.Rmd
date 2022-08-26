@@ -1,0 +1,849 @@
+---
+title: "Wet lab and Sequencing metrics"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(patchwork)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+gene_types_path <- "data/ensembl_gene_type_grch38_v103.txt"
+cts_path <- "sequencing/200914_novaseq_processing/featureCounts/loseq485_raw_nofilt_featcounts.txt"
+cts_1mil_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_tpms.txt"
+
+out_path <- "analysis/qc/"
+fig_path <- here::here("analysis/qc/figs/metrics_")
+```
+
+# Functions
+
+```{r}
+source(here::here("src/base_functions.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here::here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here::here(meta_seq_path), data.table = FALSE)
+
+gene_types <- fread(here::here(gene_types_path), data.table = FALSE)
+cts <- fread(here::here(cts_path), data.table = FALSE)
+cts_1mil <- fread(here::here(cts_1mil_path), data.table = FALSE)
+
+source(here::here("src/gtex_loseq_colors.R"))
+```
+
+# Plots
+
+# RNA-seq stats
+
+## Total reads histogram:
+
+```{r}
+rna_reads <- meta_seq %>% 
+  ggplot(aes(x = reorder(group_name, number_reads_r1), y = number_reads_r1, fill = prep)) +
+  geom_col() +
+  theme_bw() +
+  facet_wrap(~tissue, scales = "free_x", nrow = 1) +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "right") +
+  xlab("Sample") +
+  ylab("Total Reads") +
+  ggtitle("Total Reads") +
+  colScale_fill_prep +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 40e6, 10e6), limits = c(0, 40e6)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+
+ggsave(plot = rna_reads, filename = paste0(fig_path, "total_reads.png"), height = 3, width = 9)
+```
+
+
+## RNA-seq QC metrics:
+
+```{r}
+rna <- meta_seq %>% 
+  select(tissue, prep, mapping_rate, gc_content_r1, duplicate_rate_of_mapped_excluding_globins, r_rna_rate, exonic_rate, intronic_rate) %>% 
+  pivot_longer(cols = mapping_rate:intronic_rate, names_to = "metric", values_to = "rate") %>% 
+  group_by(tissue, prep, metric) %>% 
+  summarise("mu" = mean(rate),
+            "sd" = sd(rate)) %>% 
+  mutate(CI_low = mu - sd,
+         CI_high = mu + sd) %>% 
+  mutate(metric = factor(metric, 
+                         levels = c("mapping_rate", "gc_content_r1", "duplicate_rate_of_mapped_excluding_globins", "r_rna_rate", "exonic_rate", "intronic_rate"), 
+                         labels = c("Mapping rate", "GC content", "Duplicate rate", "rRNA content", "Exonic rate", "Intronic rate")))
+```
+
+```{r}
+rna %>% 
+  ggplot(aes(x = metric, y = mu, color = prep)) +
+  geom_point(position = position_dodge(0.5)) +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0, position = position_dodge(0.5)) +
+  scale_y_continuous(breaks = seq(0,1,0.1), limits = c(0,1)) +
+  coord_flip() +
+  ylab("mean +/- sd") +
+  xlab("Metric") +
+  ggtitle("RNA-seq metrics across tissues and preps") +
+  facet_grid(~tissue) +
+  scale_color_manual(values = prep_colors) +
+  theme_bw() +
+  theme(legend.position = "top",
+        axis.title.y = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) +
+  scale_x_discrete(limits = rev(levels(rna$metric)))
+```
+
+```{r, fig.width=12, fig.height=4}
+rna %>% 
+  ggplot(aes(x = tissue, y = mu, color = prep)) +
+  geom_point(position = position_dodge(0.7)) +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0, position = position_dodge(0.7)) +
+  scale_y_continuous(breaks = seq(0,1,0.1), limits = c(0,1)) +
+  ylab("mean +/- sd") +
+  #xlab("Tissue") +
+  ggtitle("RNA-seq metrics across tissues and preps") +
+  facet_grid(~metric) +
+  scale_color_manual(values = prep_colors) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+        legend.position = "top",
+        axis.title.x = element_blank(), panel.grid.minor = element_blank(),
+        plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  #axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12))
+  
+```
+
+
+```{r}
+ggsave(filename = paste0(fig_path, "rna_seq.png"), height = 4, width = 12)
+
+#write.table(rna, file = here::here("analysis/final_figs/inputs/fig1_MAIN_rnaseq_metrics.txt"), sep = "\t")
+```
+
+```{r, fig.width=9, fig.height=6}
+rna %>% 
+  ggplot(aes(x = tissue, y = mu, color = prep)) +
+  geom_point(position = position_dodge(0.7), size = 0.5) +
+  geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0, position = position_dodge(0.7), size = 0.25) +
+  scale_y_continuous(breaks = seq(0,1,0.2), limits = c(0,1)) +
+  ylab("mean +/- sd") +
+  #xlab("Tissue") +
+  ggtitle("RNA-seq metrics across tissues and preps") +
+  facet_wrap(~metric, nrow = 2) +
+  scale_color_manual(values = prep_colors) +
+  theme_bw() +
+  theme(axis.text.x = element_text(size = 7, angle = 60, hjust = 1, vjust = 1),
+        legend.position = "right",
+        axis.title.x = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.1),
+        plot.title = element_text(size = 10),
+                  plot.subtitle = element_text(size = 8),
+                  axis.title = element_text(size = 8),
+                  axis.title.y = element_text(vjust = 2),
+                  #axis.title.x = element_text(vjust = -0.75),
+                  axis.text.y = element_text(size = 6),
+                  strip.text = element_text(size = 7),
+                  legend.title = element_text(size = 8),
+                  legend.text = element_text(size = 7))
+
+
+ggsave(filename = paste0(fig_path, "rna_seq_ai.pdf"), height = 3, width = 4.5, useDingbats=FALSE)  
+```
+
+
+
+## Gene types stacked barplot
+
+```{r}
+colnames(gene_types) <- c("Geneid", "type")
+
+# protein_coding, lncRNA, Mt_rna, (pseudogene), other
+
+gene_types <- gene_types %>% mutate(type = ifelse(type %in% c("protein_coding", "lncRNA", "Mt_rRNA"), type, "other"))
+
+cts_genes <- merge(cts, gene_types, by = "Geneid")
+
+cts_genes <- cts_genes %>% pivot_longer(cols = `HEK1-C-Eh1-R1-hek-illumina_ACACTAAGAT-ATCCATATAC_HC3YYDSXY_L002_001`:`LOSQ-WTEC-C4-E8-R2-saliva-saliva_TTGGAATTCC-ACGTCAATAC_HC3YYDSXY_L003_001`,
+                                        names_to = "group_name",
+                                        values_to = "counts")
+
+sel <- meta_seq %>% select(group_name, tissue, prep)
+
+cts_genes <- merge(cts_genes, sel, by = "group_name")
+
+cts_summary <- cts_genes %>% group_by(group_name, type, tissue, prep) %>% 
+  summarise(depth = sum(counts))
+```
+
+```{r}
+plots <- lapply(unique(cts_summary$prep), function(x) {
+  cts_summary %>% 
+  filter(prep == x) %>% 
+  ggplot(aes(x = reorder(group_name, depth), y = depth, fill = factor(type, levels = c("other", "Mt_rRNA", "lncRNA", "protein_coding")))) +
+  geom_bar(position = "stack", stat = "identity") +
+  theme_bw() +
+  theme() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  xlab("Sample") +
+  ylab("Reads") + 
+  ggtitle(x) +
+  facet_wrap(~tissue, scales = "free_x", nrow = 1) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 25e6, 5e6), limits = c(0, 25e6)) +
+  labs(fill = "Gene type") +
+  scale_fill_manual(name = "type", values = RColorBrewer::brewer.pal(4, "Set1")) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  #axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12))
+})
+
+gene_plots <- (plots[[1]] / plots[[2]] / plots[[3]]) + plot_layout(guides = "collect")
+```
+
+```{r}
+ggsave(plot = gene_plots, filename = paste0(fig_path, "gene_types.png"), height = 8, width = 12)
+```
+
+```{r}
+all_preps_genes <- cts_summary %>% 
+  ggplot(aes(x = reorder(group_name, depth), y = depth, fill = factor(type, levels = c("other", "Mt_rRNA", "lncRNA", "protein_coding")))) +
+  geom_bar(position = "stack", stat = "identity") +
+  theme_bw() +
+  theme() +
+  theme(panel.grid = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  xlab("Sample") +
+  ylab("Reads") + 
+  ggtitle("Uniquely mapped reads gene types") +
+  facet_wrap(~tissue, scales = "free_x", nrow = 1) +
+  scale_y_continuous(expand = c(0, 0), breaks = seq(0, 25e6, 5e6), limits = c(0, 25e6)) +
+  labs(fill = "Gene type") +
+  scale_fill_manual(name = "type", values = RColorBrewer::brewer.pal(4, "Set1")) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  #axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12))
+
+all_preps <- rna_reads / all_preps_genes
+
+dev.size()
+```
+
+```{r}
+ggsave(plot = all_preps, filename = paste0(fig_path, "total_reads_gene_types.png"), height = 6, width = 12)
+
+ggsave(plot = all_preps, filename = paste0(fig_path, "total_reads_gene_types.pdf"), height = 6, width = 12, useDingbats = FALSE)
+```
+
+
+## Protein-coding depth retention - ALL SAMPLES, CROSS-PREPS:
+
+```{r}
+thresh <- seq(0, 20e6, 1e6)
+```
+
+```{r}
+pass <- lapply(unique(meta_seq$tissue), function(x) {
+  tis <- meta_seq %>% 
+    filter(tissue == x)
+  
+  pass <- sapply(thresh, function(x) {sum(tis$protein_coding_depth >= x)})
+  
+})
+
+names(pass) <- unique(meta_seq$tissue)
+
+pass <- as.data.frame(pass)
+
+pass$threshold <- thresh
+
+pass <- pass %>% pivot_longer(cols = hek:urine, names_to = "tissue", values_to = "samples_kept")
+```
+
+```{r, fig.height=3, fig.width=12}
+depth_pass <- pass %>% 
+  ggplot(aes(x = threshold, y = samples_kept)) +
+  geom_line() +
+  geom_vline(xintercept = 1e6, color = "black", linetype = "dashed") +
+  # geom_text(aes(x = 2.5e6, y = 60, label = "cross-loseq"), color = "black", angle = 90, vjust = -0.2) +
+  # geom_vline(xintercept = 1e6, color = "orange", linetype = "dashed") +
+  # geom_text(aes(x = 1e6, y = 60, label = "cross-prep"), color = "orange", angle = 90, vjust = -0.2) +
+  theme_bw() +
+  facet_wrap(~tissue, nrow = 1) +
+  scale_x_continuous(breaks = seq(0, 18e6, 2e6), labels = seq(0, 18, 2), expand = c(0,0)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        panel.grid.minor = element_blank()) +
+  xlab("Protein coding & lncRNA depth (in millions)") +
+  ylab("Samples remaining") +
+  ggtitle("Cross-prep Sequencing QC") +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  legend.title = element_text(size = 13),
+                  #legend.text = element_text(size = 12)
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  #axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12))
+```
+
+```{r}
+ggsave(plot = depth_pass, filename = paste0(fig_path, "prep_depth_thresholding.png"), height = 3, width = 12)
+```
+
+```{r, fig.height=4, fig.width = 12}
+sel <- meta_seq %>% select(group_name, genes_detected)
+cts_summary <- merge(cts_summary, sel, by = "group_name")
+
+depth_detect <- cts_summary %>% 
+  filter(type %in% c("protein_coding", "lncRNA")) %>%
+  group_by(group_name, tissue, genes_detected, prep) %>% 
+  summarise(depth = sum(depth)) %>% 
+  ggplot(aes(x = depth, y = genes_detected, color = prep)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~tissue, nrow = 1) +
+  theme_bw() +
+  xlab("Protein coding & lncRNA depth (in millions)") +
+  ylab("Genes detected") +
+  geom_vline(xintercept = 1e6, color = "black", linetype = "dashed") +
+  # geom_text(aes(x = 2.5e6, y = 20000, label = "cross-loseq"), color = "black", angle = 90, vjust = -0.2) +
+  # geom_vline(xintercept = 1e6, color = "orange", linetype = "dashed") +
+  # geom_text(aes(x = 1e6, y = 20000, label = "cross-prep"), color = "orange", angle = 90, vjust = -0.2) +
+  colScale_prep +
+  scale_x_continuous(breaks = seq(0, 18e6, 2e6), labels = seq(0, 18, 2)) +
+  scale_y_continuous(breaks = seq(0, 25e3, 5e3)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        legend.position = "right") +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+        panel.grid.minor = element_blank())
+```
+```{r}
+ggsave(plot = depth_detect, filename = paste0(fig_path, "prep_depth_genes_detected.png"), height = 3, width = 12)
+```
+
+
+```{r}
+sel <- meta_seq %>% select(group_name, exonic_rate, intronic_rate, intergenic_rate)
+
+pf <- cts_summary %>% 
+  filter(type %in% c("protein_coding", "lncRNA")) %>%
+  group_by(group_name, tissue, genes_detected, prep) %>% 
+  summarise(depth = sum(depth))
+
+pf <- merge(pf, sel, by = "group_name")
+
+pf <- pf %>% 
+  mutate(passed = ifelse(depth >= 1e6, "yes", "no")) %>% 
+  pivot_longer(cols = exonic_rate:intergenic_rate, names_to = "metric", values_to = "proportion")
+```
+
+```{r}
+pf_plot <- pf %>% 
+  #filter(prep == "loseq") %>% 
+  ggplot(aes(x = metric, y = proportion, color = passed)) +
+  geom_jitter(width = 0.3, size = 1, alpha = 0.6) +
+  facet_grid(~ tissue) +
+  theme_bw() +
+  xlab("") +
+  ylab("Proportion of reads") +
+  #ggtitle("Loseq depth pass/fail characteristics") +
+  scale_x_discrete(labels = c("exonic", "intergenic", "intronic")) +
+  scale_color_manual(values = c("yes" = "black", "no" = "red")) +
+  theme_bw() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12, color = "grey30"),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+                  axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1))
+```
+
+```{r}
+pf_depth_plots <- (depth_pass / depth_detect / pf_plot) #+ plot_layout(guides = "collect")
+```
+
+```{r}
+ggsave(plot = pf_depth_plots, filename = paste0(fig_path, "prep_depth_all_plots.png"), height = 9, width = 12)
+
+ggsave(plot = pf_depth_plots, filename = paste0(fig_path, "prep_depth_all_plots.pdf"), height = 9, width = 12, useDingbats = FALSE)
+```
+
+## Protein-coding depth retention - LOSEQ-ONLY:
+
+```{r}
+thresh <- seq(0, 20e6, 1e6)
+```
+
+```{r}
+pass <- lapply(unique(meta_seq$tissue), function(x) {
+  tis <- meta_seq %>% 
+    filter(tissue == x,
+           prep == "loseq")
+  
+  pass <- sapply(thresh, function(x) {sum(tis$protein_coding_depth >= x)})
+  
+})
+
+names(pass) <- unique(meta_seq$tissue)
+
+pass <- as.data.frame(pass)
+
+pass$threshold <- thresh
+
+pass <- pass %>% pivot_longer(cols = hek:urine, names_to = "tissue", values_to = "samples_kept")
+```
+
+```{r, fig.height=3, fig.width=12}
+depth_pass <- pass %>% 
+  ggplot(aes(x = threshold, y = samples_kept)) +
+  geom_line() +
+  geom_vline(xintercept = 2.5e6, color = "black", linetype = "dashed") +
+  # geom_text(aes(x = 2.5e6, y = 60, label = "cross-loseq"), color = "black", angle = 90, vjust = -0.2) +
+  # geom_vline(xintercept = 1e6, color = "orange", linetype = "dashed") +
+  # geom_text(aes(x = 1e6, y = 60, label = "cross-prep"), color = "orange", angle = 90, vjust = -0.2) +
+  theme_bw() +
+  facet_wrap(~tissue, nrow = 1) +
+  scale_x_continuous(breaks = seq(0, 18e6, 2e6), labels = seq(0, 18, 2), expand = c(0,0)) +
+  scale_y_continuous(breaks = seq(0,90,10)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        panel.grid.minor = element_blank()) +
+  xlab("Protein coding & lncRNA depth (in millions)") +
+  ylab("Samples remaining") +
+  ggtitle("Loseq Sequencing QC") +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  legend.title = element_text(size = 13),
+                  #legend.text = element_text(size = 12)
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  #axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12))
+```
+
+```{r}
+ggsave(plot = depth_pass, filename = paste0(fig_path, "loseq_depth_thresholding.png"), height = 3, width = 12)
+```
+
+```{r, fig.height=4, fig.width = 12}
+#sel <- meta_seq %>% select(group_name, genes_detected)
+#cts_summary <- merge(cts_summary, sel, by = "group_name")
+
+depth_detect <- cts_summary %>% 
+  filter(type %in% c("protein_coding", "lncRNA"),
+         prep == "loseq") %>%
+  group_by(group_name, tissue, genes_detected, prep) %>% 
+  summarise(depth = sum(depth)) %>% 
+  ggplot(aes(x = depth, y = genes_detected, color = prep)) +
+  geom_point(alpha = 0.6) +
+  facet_wrap(~tissue, nrow = 1) +
+  theme_bw() +
+  xlab("Protein coding & lncRNA depth (in millions)") +
+  ylab("Genes detected") +
+  geom_vline(xintercept = 2.5e6, color = "black", linetype = "dashed") +
+  # geom_text(aes(x = 2.5e6, y = 20000, label = "cross-loseq"), color = "black", angle = 90, vjust = -0.2) +
+  # geom_vline(xintercept = 1e6, color = "orange", linetype = "dashed") +
+  # geom_text(aes(x = 1e6, y = 20000, label = "cross-prep"), color = "orange", angle = 90, vjust = -0.2) +
+  scale_x_continuous(breaks = seq(0, 18e6, 2e6), labels = seq(0, 18, 2)) +
+  scale_y_continuous(breaks = seq(0, 25e3, 5e3)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        legend.position = "none") +
+  scale_color_manual(values = prep_colors[2]) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+        panel.grid.minor = element_blank())
+```
+
+```{r}
+ggsave(plot = depth_detect, filename = paste0(fig_path, "loseq_depth_genes_detected.png"), height = 3, width = 12)
+```
+
+```{r}
+pf_plot <- pf %>% 
+  filter(prep == "loseq") %>% 
+  mutate(passed = ifelse(depth >= 2.5e6, "yes", "no")) %>%
+  ggplot(aes(x = metric, y = proportion, color = passed)) +
+  geom_jitter(width = 0.3, size = 1, alpha = 0.6) +
+  facet_grid(~ tissue) +
+  theme_bw() +
+  xlab("") +
+  ylab("Proportion of reads") +
+  #ggtitle("Loseq depth pass/fail characteristics") +
+  #scale_x_discrete(labels = c("exonic", "intergenic", "intronic")) +
+  scale_color_manual(values = c("yes" = "black", "no" = "red")) +
+  theme_bw() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12, color = "grey30"),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+                  axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1))
+```
+
+```{r}
+pf_depth_plots <- (depth_pass / depth_detect / pf_plot) #+ plot_layout(guides = "collect")
+```
+
+```{r}
+ggsave(plot = pf_depth_plots, filename = paste0(fig_path, "loseq_depth_all_plots.png"), height = 9, width = 12)
+
+ggsave(plot = pf_depth_plots, filename = paste0(fig_path, "loseq_depth_all_plots.pdf"), height = 9, width = 12, useDingbats = FALSE)
+```
+
+
+# Wet lab stats
+
+cDNA average size:
+
+```{r}
+meta_full %>% 
+  filter(prep != "illumina") %>% 
+  mutate(passed = ifelse(passed == "seq_QC", "passed", "failed")) %>% 
+  ggplot(aes(x = cdna_avesize, y = tissue, fill = prep)) +
+  ggridges::geom_density_ridges(aes(color = prep), quantile_lines = FALSE, quantiles = 4,
+                                jittered_points = TRUE,
+                                position = ggridges::position_points_jitter(height = 0),
+                                point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.5) +
+  theme_bw() +
+  ggtitle("Loseq and Smartseq cDNA size") +
+  scale_fill_manual(values = prep_colors[2:3]) +
+  scale_color_manual(values = prep_colors[2:3])
+```
+
+```{r}
+cdna <- meta_full %>% 
+  filter(prep != "illumina") %>% 
+  ggplot(aes(x = tissue, y = cdna_avesize, fill = prep)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.75) +
+  geom_jitter(size = 1, position = position_jitterdodge(jitter.width = 0.15), alpha = 0.3) +
+  theme_bw() +
+  ggtitle("Loseq and Smartseq cDNA size") +
+  ylab("Average cDNA size (bps)") +
+  scale_y_continuous(breaks = seq(500, 2000, 250), limits = c(500, 2000)) +
+  scale_fill_manual(values = prep_colors[2:3]) +
+  theme(legend.position = "right") +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12))
+
+```
+
+
+
+```{r}
+ggsave(plot = cdna, filename = paste0(fig_path, "cdna_size.png"), height = 4, width = 6)
+
+ggsave(plot = cdna, filename = paste0(fig_path, "cdna_size.pdf"), height = 4, width = 6.5, useDingbats = FALSE)
+```
+
+RNA concentration:
+
+```{r}
+rna_conc <- meta_full %>% 
+  filter(prep == "loseq",
+         tissue != "hek") %>% 
+  mutate(passed = ifelse(passed == "seq_QC", "passed", "failed")) %>% 
+  ggplot(aes(x = log(rna_conc_nd*14, base = 10), y = tissue, fill = tissue)) +
+  ggridges::geom_density_ridges(quantile_lines = TRUE, quantiles = 4,
+                                jittered_points = TRUE,
+                                position = ggridges::position_points_jitter(height = 0),
+                                point_shape = '|', point_size = 3, point_alpha = 1, alpha = 0.7, scale = 0.9) +
+  theme_bw() +
+  ggtitle("Total RNA yield") +
+  xlab(expression(log[10](RNA)~ng)) +
+  scale_x_continuous(breaks = seq(0,9,1)) +
+  scale_fill_manual(values = myColors[c("buccal", "hair", "saliva", "urine")]) +
+  theme(legend.position = "none",
+        axis.title.y = element_blank()) +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12))
+
+rna_conc_box <- meta_full %>% 
+  filter(prep == "loseq",
+         tissue != "hek") %>% 
+  mutate(passed = ifelse(passed == "seq_QC", "passed", "failed")) %>% 
+  ggplot(aes(x = tissue, y = log(rna_conc_nd*14, base = 10), fill = tissue)) +
+  #ggplot(aes(x = tissue, y = rna_conc_nd*14, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.75) +
+  geom_jitter(size = 1, position = position_jitterdodge(jitter.width = 0.2), alpha = 0.7) +
+  theme_bw() +
+  ggtitle("Total RNA yield") +
+  ylab(expression(log[10](RNA)~ng)) +
+  scale_y_continuous(breaks = seq(0,5,1), limits = c(0,5)) +
+  scale_fill_manual(values = myColors[c("buccal", "hair", "saliva", "urine")]) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12))
+```
+
+```{r}
+ggsave(plot = rna_conc, filename = paste0(fig_path, "rna_conc.png"), height = 4, width = 6.5)
+
+ggsave(plot = rna_conc_box, filename = paste0(fig_path, "rna_conc.pdf"), height = 4, width = 5, useDingbats = FALSE)
+```
+
+By donor:
+
+```{r}
+# pass <- meta_seq %>% filter(protein_coding_depth >= 2.5e6) %>% pull(donor_id)
+
+rna_donors <- meta_full %>% 
+  mutate(remove_samp = ifelse(tissue == "saliva" & collection_number == 1, "yes", "no")) %>% 
+  filter(prep == "loseq",
+         tissue != "hek",
+         remove_samp != "yes") %>% 
+  # mutate(passed = ifelse(passed == "seq_QC", "passed", "failed")) %>% 
+  #mutate(passed = ifelse(donor_id %in% pass, "passed", "failed")) %>% 
+  ggplot(aes(x = donor_id, y = log(rna_conc_nd*14, base = 10), fill = tissue)) +
+  #ggplot(aes(x = donor_id, y = rna_conc_nd*14, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.75) +
+  geom_jitter(size = 1, position = position_jitterdodge(jitter.width = 0.2), alpha = 0.7) +
+  theme_bw() +
+  ggtitle("Total RNA yield") +
+  ylab(expression(log[10](RNA)~ng)) +
+  xlab("Donor") +
+  scale_y_continuous(breaks = seq(0,5,1), limits = c(0,5)) +
+  scale_x_discrete(labels = paste0(1:19)) +
+  scale_fill_manual(values = myColors[c("buccal", "hair", "saliva", "urine")]) +
+  facet_wrap(~tissue, nrow = 1) +
+  theme(legend.position = "none") +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12),
+        #axis.title.x = element_blank(),
+        axis.text.x = element_text(size = 12, angle = 45, hjust = 1, vjust = 1))
+
+ggsave(plot = rna_donors, filename = paste0(fig_path, "rna_conc_by_donor.pdf"), height = 5, width = 16, useDingbats = FALSE)
+```
+
+
+
+## RIN vs TIN
+
+```{r}
+sel <- meta_seq %>% 
+  filter(!is.na(tin_mean),
+         tissue != "hek",
+         prep == "loseq") %>% select(group_name, rin, tin_mean)
+
+pf <- merge(pf, sel, by = "group_name")
+
+rin_tin <- pf %>% 
+  filter(!is.na(tin_mean),
+         !is.na(rin),
+         metric == "exonic_rate") %>% #because rows in replicatee right now
+  distinct() %>% 
+  mutate(passed = ifelse(depth >= 2.5e6, "yes", "no")) %>% 
+  ggplot(aes(x = rin, y = tin_mean)) +
+  geom_point(aes(color = passed), alpha = 0.4) +
+  facet_wrap(~tissue) +
+  theme_bw() +
+  ggtitle("RNA quality: 2.5e6 threshold") +
+  xlab("RIN") +
+  ylab("Mean TIN") +
+  scale_color_manual(values = c("yes" = "black", "no" = "red")) +
+    theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.title.y = element_text(vjust = -2),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12))
+```
+
+
+```{r}
+ggsave(plot = rin_tin, filename = paste0(fig_path, "rin_vs_tin.png"), height = 6, width = 7)
+
+ggsave(plot = rin_tin, filename = paste0(fig_path, "rin_vs_tin.pdf"), height = 6, width = 7, useDingbats = FALSE)
+```
+
+# Grid
+
+```{r}
+# set up replicate naming, remove unreplicated loseq, remove HEK, add pass indicator
+meta_reps <- meta_full %>%
+  mutate(prep = ifelse(prep == "loseq" & replicate %in% c(0,1), "loseq_replicate_1", prep),
+         prep = ifelse(prep == "loseq" & replicate == 2, "loseq_replicate_2", prep)) %>%
+  filter(prep != "loseq", # does not remove unreplicated loseq, not a totally necessary line
+         replicate != 3) %>%  # removes 3rd HEK replicate
+  filter(tissue != "hek") %>%
+  select(group_name, donor_id, tissue, prep, collection_number) %>%
+  mutate(pass = ifelse(group_name %in% colnames(cts_1mil), "", "X"))
+
+# add counts column for stacked barplot plot
+temp <- meta_reps %>%
+  group_by(donor_id, tissue, prep, collection_number) %>%
+  summarise(n = n()) %>%
+  mutate(prep = factor(prep, levels = c("smartseq", "illumina", "loseq_replicate_2", "loseq_replicate_1")))
+
+meta_reps <- merge(temp, meta_reps, by = c("donor_id", "tissue", "prep", "collection_number"))
+
+# put collection number/prep in correct order
+meta_reps <- meta_reps %>%
+  select(donor_id, tissue, prep, collection_number, n, pass) %>%
+  group_by(donor_id, tissue) %>%
+  arrange(desc(prep), .by_group = TRUE)
+
+prep_colors3 <- c(prep_colors, "seagreen3")
+names(prep_colors3) <- c("illumina", "loseq_replicate_1", "smartseq",  "loseq_replicate_2") # named character vector, names are preps, values are colors
+legendord <- prep_colors3[c("loseq_replicate_1", "loseq_replicate_2", "illumina", "smartseq")]
+
+# Stacked barplot with prep, coll#, and pass/fail indicator ----------------------
+
+grid <- meta_reps %>%
+  ggplot(aes(x = donor_id, y = n)) +
+  geom_col(aes(fill = prep), colour = 'black') +
+  geom_text(aes(label = as.factor(collection_number)), position = position_stack(vjust = 0.5), color = "black") +
+  geom_text(aes(label = pass), position = position_stack(vjust = 0.5), color = "white", alpha = 0.75, lwd = 5) +
+  scale_y_continuous(breaks = seq(0,8,1), limits = c(0,8)) +
+  facet_grid(~tissue) +
+  coord_flip() +
+  # scale_pattern_type_discrete(choices = c('vertical', 'horizontal', 'circles', "hs_cross")) +
+  scale_fill_manual(name = "Prep", values = legendord, labels = c("loseq rep1", "loseq rep2", "illumina", "smartseq"), drop = TRUE) +
+  #ggtitle("Samples per donor",
+  #        subtitle = "X's indicate failed QC, Numbers indicate collection #") +
+  ggtitle("Samples per donor") +
+  xlab("Donor") +
+  ylab("Samples") +
+  theme_bw() +
+  scale_x_discrete(labels = c(seq(1,19,1))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_text(vjust = -0.75),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        panel.grid = element_blank())
+
+ggsave(plot = grid, filename = paste0(fig_path, "grid.pdf"), height = 6, width = 10, useDingbats = FALSE)
+```
+
+# ALL
+
+```{r}
+all_wetqc <- ((rna_conc + cdna) / (rin_tin + plot_spacer() + plot_layout(widths = c(1, 1)))) + plot_layout(heights = c(1, 1.25))#+ plot_layout(guides = "collect")
+
+ggsave(plot = all_wetqc, filename = paste0(fig_path, "wetlab_qc_all.png"), height = 8, width = 10)
+```
+
+```{r}
+all_qc <- ((grid + rin_tin) / (rna_conc_box + cdna) / all_preps) + plot_layout(heights = c(1,1,2))
+```
+
+
+```{r}
+grid_tin <- (grid + rin_tin) + plot_layout(widths = c(1.5,1))
+
+ggsave(plot = grid_tin, filename = paste0(fig_path, "grid_rin_vs_tin.pdf"), height = 6, width = 17, useDingbats = FALSE)
+```
+```{r}
+rna_cdna <- (rna_conc_box + cdna) + plot_layout(widths = c(1,1.25))
+
+ggsave(plot = rna_cdna, filename = paste0(fig_path, "rna_cdna.pdf"), height = 4, width = 11.5, useDingbats = FALSE)
+```
+
+
+
+
+
+
+

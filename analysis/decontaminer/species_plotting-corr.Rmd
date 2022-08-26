@@ -1,0 +1,306 @@
+---
+title: "u;ghu"
+output: html_document
+---
+
+```{r}
+library(here)
+library(dplyr)
+library(tidyverse)
+library(janitor)
+library(ggplot2)
+```
+
+
+```{r}
+ct0 <- data.table::fread(here::here("Results_tables/Counts_sp_CT_0.txt"), sep = "\t", data.table = FALSE) %>% janitor::clean_names()
+ct5 <- data.table::fread(here::here("Results_tables/Counts_sp_CT_5.txt"), sep = "\t", data.table = FALSE) %>% janitor::clean_names()
+#stats <- data.table::fread(here::here("Results_tables/Reads_stats.txt"), sep = "\t", data.table = FALSE)
+meta <- read.table(file = here::here("../data/210817_samplekey_485.txt"), sep = "\t", header = TRUE)
+
+sp_length<-data.table::fread(here::here("species-lengths.txt"), sep = "\t", data.table = FALSE, header = TRUE) %>% janitor::clean_names()
+sp_length$species_name<-gsub(sp_length$species_name, pattern = " strain.+", replacement = "")
+sp_length$species_name<-gsub(sp_length$species_name, pattern = " isolate.+", replacement = "")
+sp_length$species_name[sp_length$species_name %in% c("Candidatus Arthromitus sp. SFB-rat-Yit", "Candidatus Arthromitus sp. SFB-mouse-Yit", "Candidatus Arthromitus sp. SFB-mouse-NL", "Candidatus Arthromitus sp. SFB-mouse-Japan")]<-"Candidatus Arthromitus"
+sp_length$species_name[sp_length$species_name == 'Candidatus Izimaplasma sp. HR1']<-'Candidatus Izimaplasma'
+sp_length$species_name[sp_length$species_name == 'Candidatus Nitrotoga sp. AM1P']<-'Candidatus Nitrotoga'
+sp_length$species_name[sp_length$species_name == 'Candidatus Symbiopectobacterium sp. SyEd1']<-'Candidatus Symbiopectobacterium'
+sp_length$species_name[sp_length$species_name == 'Candidatus Xiphinematobacter sp. Idaho']<-'Candidatus Xiphinematobacter'
+sp_length$species_name[sp_length$species_name == 'Candidatus Xiphinematobacter sp. Idaho']<-'Candidatus Xiphinematobacter'
+sp_length$species_name[sp_length$species_name == 'polyomavirus']<-'JC polyomavirus'
+sp_length$species_name[sp_length$species_name == 'Vibrio sp. sp1 chromosome']<-'Vibrio sp. sp1'
+
+ct0<-ct0 %>% filter(!species_name %in% c("Eremothecium gossypii", "Yangia sp. CCB-MM3"))
+ct0$species_name<-gsub(ct0$species_name, pattern = ",", replacement = "")
+ct0$species_name[ct0$species_name %in% c("Bordetella genomosp. 13", "Bordetella genomosp. 6", "Bordetella genomosp. 8", "Bordetella genomosp. 9")]<-"Bordetella genomosp."
+ct0$species_name[ct0$species_name %in% c("Bradyrhizobium genosp. B", "Bradyrhizobium genosp. L")]<-"Bradyrhizobium genosp."
+ct0$species_name[ct0$species_name == 'JC polyom virus']<-'JC polyomavirus'
+ct0$species_name[ct0$species_name == 'Phage phi OH2 DNA complete genom phage']<-'Phage phi OH2 DNA'
+ct0$species_name[ct0$species_name == 'Planococcus sp. Y42']<-'Planococcus lenghuensis'
+ct0$species_name[ct0$species_name == 'CrAs phage']<-'CrAssphage'
+ct0$species_name[ct0$species_name == 'Bacteri phage']<-'Bacteriophage'
+ct0$species_name[ct0$species_name == 'Cyan phage']<-'Cyanophage'
+ct0$species_name[ct0$species_name == 'Lactococcus pr phage']<-'Lactococcus prophage'
+ct0$species_name[ct0$species_name == 'Mycobacteri phage']<-'Mycobacteriophage'
+ct0$species_name[ct0$species_name == 'Streptococcus pneumoniae bacteri phage']<-'Streptococcus pneumoniae bacteriophage'
+ct0$species_name[ct0$species_name == 'Streptococcus pr phage']<-'Streptococcus prophage'
+ct0$species_name[ct0$species_name == 'Bell pepper endorn virus']<-'Bell pepper endornavirus'
+ct0$species_name[ct0$species_name == 'Choristoneura fumiferana granul virus']<-'Choristoneura fumiferana granulovirus'
+ct0$species_name[ct0$species_name == 'Human aden virus']<-'Human adenovirus'
+ct0$species_name[ct0$species_name == 'Human Coron virus']<-'Human Coronavirus'
+ct0$species_name[ct0$species_name == 'Human endogenous retr virus']<-'Human endogenous retrovirus'
+ct0$species_name[ct0$species_name == 'Human herpe virus']<-'Human herpesvirus'
+ct0$species_name[ct0$species_name == 'Human lung-associated vient virus']<-'Human lung-associated vientovirus'
+ct0$species_name[ct0$species_name == 'Human rhin virus']<-'Human rhinovirus'
+ct0$species_name[ct0$species_name == 'Impatiens flower break pot virus']<-'Impatiens flower break potyvirus'
+ct0$species_name[ct0$species_name == "Geobacillus genomosp. 3"]<-"Geobacillus genomosp."
+ct0$species_name[ct0$species_name == 'Murine type C retr virus']<-'Murine type C retrovirus'
+ct0$species_name[ct0$species_name == 'Persea americana chrys virus']<-'Persea americana chrysovirus'
+
+ct0<-ct0 %>% group_by(donor, tissue, rep, lib, sample, organism, species_name) %>% summarise(count = mean(count)) %>% filter(!tissue == "hek")
+sp_length<-sp_length %>% group_by(species_name, organism) %>% summarise(length_bp = mean(length_bp))
+```
+
+```{r}
+ct5<-ct0 %>% dplyr::rename("seq_id" = sample)
+ct5<-merge(ct5, meta[, c("group_name", "seq_id", "donor_id")])
+
+ct5$col<-gsub(gsub(ct5$seq_id, pattern = "-E.+", replacement = ""), pattern = ".+\\-C", replacement = "")
+
+sp_len<-sp_length %>% filter(species_name %in% unique(ct5$species_name)) %>% arrange(species_name)
+sp_len<-unique(sp_len)
+table(sp_len$species_name)[(table(sp_len$species_name)) == 2]
+sp_len<-sp_len %>% filter(!(species_name == "Streptococcus pyogenes" & organism == "VIRUSES"))
+
+ct5_n <- ct5 %>% filter(!lib %in% c("smartseq", "illumina")) %>% arrange(species_name)
+
+remrea<-data.table::fread(here::here("../fastqc/numlines_valid-ids.txt"), sep = " ", header = FALSE, data.table = FALSE)
+remrea<-remrea[,c(2,1)]
+colnames(remrea)<-c("seq_id", "Remapped reads")
+remrea$seq_id<-gsub(gsub(remrea$seq_id, pattern = "stats_ids/temp_", replacement = ""), pattern = "\\_.+", replacement = "")
+remrea[,2] <- as.numeric(remrea[,2])
+remrea<-remrea %>% filter(seq_id %in% unique(ct5_n$seq_id))
+
+ct5_n$prop_count<-ct5_n$count
+ct5_n$reads<-ct5_n$count*2
+
+#length(as.vector(sp_len$species_name))
+for (i in 1:length(as.vector(sp_len$species_name))){
+  #print(i)
+  ct5_n[ct5_n$species_name == sp_len$species_name[i],]$prop_count<-(ct5_n %>% filter(species_name == sp_len$species_name[i]))$reads / sp_len$length_bp[i]
+}
+
+#LOSQ-RCCA-C4-E9-R1-saliva-saliva
+#'Nostoc azollae'
+ct5_n<-ct5_n %>% arrange(seq_id)
+remrea<-remrea %>% arrange(seq_id)
+for (i in 1:length(as.vector(remrea$seq_id))){
+   #print(i)
+  scalling_fac<- remrea[i,2]/(1e6)
+   ct5_n[ct5_n$seq_id == remrea[i,1],]$prop_count<-(ct5_n %>% filter(seq_id == remrea[i,1]))$prop_count / scalling_fac
+}
+```
+
+```{r}
+ct5_1<- ct5_n %>% filter(!lib %in% c("smartseq", "illumina")) %>% group_by(seq_id, tissue, organism, species_name, col) %>% dplyr::summarise(mean_prop = mean(prop_count))
+
+freqs_spec<-cbind(ct5_1 %>% filter(tissue == "buccal") %>% group_by(species_name) %>% dplyr::summarise(Freq = mean(mean_prop)), (ct5_1 %>% filter(tissue == "hair") %>% group_by(species_name) %>% dplyr::summarise(Freq = mean(mean_prop)))$Freq, 
+#(ct5_1 %>% filter(tissue == "hek") %>% group_by(species_name) %>% dplyr::summarise(Freq = mean(mean_prop)))$Freq, 
+(ct5_1 %>% filter(tissue == "saliva") %>% group_by(species_name) %>% dplyr::summarise(Freq = mean(mean_prop)))$Freq,
+(ct5_1 %>% filter(tissue == "urine") %>% group_by(species_name) %>% dplyr::summarise(Freq = mean(mean_prop)))$Freq
+)
+
+#colnames(freqs_spec)<-c("Species", "buccal", "hair", "hek", "saliva", "urine")
+colnames(freqs_spec)<-c("Species", "buccal", "hair", "saliva", "urine")
+
+freqs_spec<-as.data.frame(t(freqs_spec))
+freqs_spec<-freqs_spec %>% row_to_names(row_number = 1)
+freqs_spec[,1:5797]<-lapply(freqs_spec[,1:5797], as.character)
+freqs_spec[,1:5797]<-lapply(freqs_spec[,1:5797], as.numeric)
+
+freqs_spec$tissue<-rownames(freqs_spec)
+rownames(freqs_spec)<-NULL
+
+freqs_spec<-reshape2::melt(freqs_spec, id.vars = "tissue")
+
+## top 10%
+quantiles<-tapply(X = freqs_spec$value[freqs_spec$value > 0], INDEX = freqs_spec$tissue[freqs_spec$value > 0], FUN = quantile, probs = c(0.995))
+freqs_spec2<-rbind(freqs_spec %>% filter(tissue == "buccal" & value >= quantiles[1]), 
+                   freqs_spec %>% filter(tissue == "hair" & value >= quantiles[2]), 
+                   #freqs_spec %>% filter(tissue == "hek" & value >= quantiles[3]), 
+                   #freqs_spec %>% filter(tissue == "saliva" & value >= quantiles[4]), 
+                   #freqs_spec %>% filter(tissue == "urine" & value >= quantiles[5]))
+                   freqs_spec %>% filter(tissue == "saliva" & value >= quantiles[3]), 
+                   freqs_spec %>% filter(tissue == "urine" & value >= quantiles[4]))
+
+species2plot<-unique(freqs_spec2$variable)
+length(species2plot)
+```
+
+
+
+
+
+
+```{r}
+df_corr<-cbind((ct5_n %>% filter(species_name %in% species2plot)  %>% filter(!lib %in% c("smartseq", "illumina"))  %>% select(donor, tissue, col, species_name, prop_count, rep) %>% filter(rep == 1)), (ct5_n %>% filter(species_name%in% species2plot)  %>% filter(!lib %in% c("smartseq", "illumina"))  %>% select(donor, tissue, col, species_name, prop_count, rep) %>% filter(rep == 2))$prop_count)
+
+colnames(df_corr)[c(5,7)]<-c("prop_count_1","prop_count_2")
+
+df_corr<-df_corr %>% select(donor, tissue, col, species_name, prop_count_1, prop_count_2) 
+
+df_corr<-df_corr %>% filter(prop_count_1 + prop_count_2 > 0)
+
+
+#tab_corr<-data.frame(tissue = rep(c(sort(unique(ct5$tissue))), times = rep(90, times = 5)), species_name = rep(unique((ct5_n %>% filter(species_name %in% species2plot))$species_name), times = 5),rho = rep(NA, times = 90*5), pvalue = rep(NA, times = 90*5))
+
+tab_corr<-data.frame(tissue = rep(c(sort(unique(ct5$tissue))), times = rep(45, times = 4)),
+                     species_name = rep(unique((ct5_n %>% filter(species_name %in% species2plot))$species_name), times = 4), 
+                     rho = rep(NA, times = 45*4), 
+                     pvalue = rep(NA, times = 45*4))
+tissues<-c(sort(unique(ct5$tissue)))
+
+for (t in 1:length(tissues)){
+  species<-names(which(table((df_corr %>% filter(tissue == tissues[t]))$species_name) > 1))
+  for (i in 1:length(species)){
+    ct<-cor.test((df_corr %>% filter(tissue == tissues[t], species_name == species[i]))$prop_count_1, 
+                 (df_corr %>% filter(tissue == tissues[t], species_name == species[i]))$prop_count_2, 
+                 method = "spearman")
+    tab_corr[which(tab_corr$species_name == species[i] & tab_corr$tissue == tissues[t]), 4]<-ct$p.value
+    tab_corr[which(tab_corr$species_name == species[i] & tab_corr$tissue == tissues[t]), 3]<-ct$estimate
+  }
+}
+
+sel_spc<-as.character(unique((tab_corr %>% filter(rho >= 0.75, pvalue <=0.05))$species_name))
+```
+
+
+```{r}
+ct5_mat_filt<-ct5_1 %>% filter(species_name %in% sel_spc)
+ct5_mat_filt<-ct5_mat_filt %>% select(seq_id, tissue, species_name, mean_prop)
+
+df.summary <- ct5_mat_filt %>%
+  group_by(species_name, tissue) %>%
+  dplyr::summarise(
+    thirdq = quantile(mean_prop, 0.75),
+    median = quantile(mean_prop, 0.5), 
+    firstq = quantile(mean_prop, 0.25)
+  )
+
+df.summary$tissue<-factor(df.summary$tissue, levels = c("hair", "buccal", "saliva", "urine"))
+
+#df.summary$species_name<-c(paste(str_sub(df.summary$species_name[1:30], 1, 1), gsub(df.summary$species_name[1:30], pattern = ".+ ", replacement = ""), sep = ". "), df.summary$species_name[31:35], paste(str_sub(df.summary$species_name[36:80], 1, 1), gsub(df.summary$species_name[36:80], pattern = ".+ ", replacement = ""), sep = ". "), df.summary$species_name[81:85], paste(str_sub(df.summary$species_name[86:90], 1, 1), gsub(df.summary$species_name[86:90], pattern = ".+ ", replacement = ""), sep = ". "), paste(str_sub(df.summary$species_name[91:95], 1, 1), gsub(df.summary$species_name[91:95], pattern = ".+ ", replacement = ""), sep = ". sp. "), paste(str_sub(df.summary$species_name[96:155], 1, 1), gsub(df.summary$species_name[96:155], pattern = ".+ ", replacement = ""), sep = ". "), paste(str_sub(df.summary$species_name[156:160], 1, 1), gsub(df.summary$species_name[156:160], pattern = ".+ ", replacement = ""), sep = ". sp. "),paste(str_sub(df.summary$species_name[161:280], 1, 1), gsub(df.summary$species_name[161:280], pattern = ".+ ", replacement = ""), sep = ". "), paste(str_sub(df.summary$species_name[281:310], 1, 1), gsub(df.summary$species_name[281:310], pattern = ".+ ", replacement = ""), sep = ". sp. "), paste(str_sub(df.summary$species_name[311:345], 1, 1), gsub(df.summary$species_name[311:345], pattern = ".+ ", replacement = ""), sep = ". "),df.summary$species_name[346:350], paste(str_sub(df.summary$species_name[351:355], 1, 1), gsub(df.summary$species_name[351:355], pattern = ".+ ", replacement = ""), sep = ". "))
+
+df.summary$species_name<-c(
+  paste(str_sub(df.summary$species_name[1:40], 1, 1), gsub(df.summary$species_name[1:40], pattern = ".+ ", replacement = ""), sep = ". "), 
+  df.summary$species_name[41:44], 
+  paste(str_sub(df.summary$species_name[45:48], 1, 1), gsub(df.summary$species_name[45:48], pattern = ".+ ", replacement = ""), sep = ". sp. "), 
+  paste(str_sub(df.summary$species_name[49:112], 1, 1), gsub(df.summary$species_name[49:112], pattern = ".+ ", replacement = ""), sep = ". "), 
+  paste(str_sub(df.summary$species_name[113:136], 1, 1), gsub(df.summary$species_name[113:136], pattern = ".+ ", replacement = ""), sep = ". sp. "), 
+  paste(str_sub(df.summary$species_name[137:140], 1, 1), gsub(df.summary$species_name[137:140], pattern = ".+ ", replacement = ""), sep = ". ")
+  )
+
+df.summary$species_name<-as.factor(df.summary$species_name)
+df.summary %>% arrange(species_name)
+
+lab_colors<-ifelse(levels(df.summary$species_name) == 'M. restricta', '#DAA520', 'black')
+lab_colors<-lab_colors[-11]
+lab_colors[1:2]<-"#1E90FF"
+lab_colors[c(9)]<-"#FFCCCB"
+lab_colors[16]<-"#B22222"
+
+write.table(here::here("../species_plotting-corr_median-iqr.txt"), x = df.summary, append = FALSE, quote = FALSE, sep = "\t", row.names = FALSE, col.names = TRUE)
+
+df.summary %>% 
+  filter(!species_name == "Human endogenous retrovirus") %>%
+  ggplot(aes(x = species_name, y = median, fill=tissue)) +
+  facet_grid(tissue ~., scales = "free_y") +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin=firstq, ymax=thirdq), width=.2) +
+  scale_fill_manual(values = c("#DAA520", "#B22222", "#FFCCCB", "#1E90FF")) +
+  #theme(legend.position= "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3)) +
+  theme_bw() +
+  theme(axis.text.x=element_text(angle=90)) +
+  theme(plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 13),
+        axis.title = element_text(size = 13),
+        axis.title.y = element_text(vjust = 2),
+        axis.title.x = element_text(vjust = -0.75),
+        axis.text = element_text(size = 12),
+        strip.text = element_text(size = 12),
+        legend.title = element_text(size = 13),
+        legend.text = element_text(size = 12), 
+        axis.ticks.x = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, face = "italic", colour=lab_colors),
+        legend.position= "none", 
+        panel.grid.major = element_line(size = 0.1),
+        panel.grid.minor = element_blank()) +
+  xlab("") +
+  ylab("Median and IQR")
+ggsave(filename = here::here("Plots/Median-IQR-norm.png"), width = 8.1, height = 6.2, units = "in")
+```
+
+
+```{r}
+tab_corr<-tab_corr %>% filter(species_name %in% sel_spc) %>% arrange(species_name)
+#tab_corr$tissue<-factor(tab_corr$tissue, levels = c("hair", "buccal", "saliva", "urine", "hek"))
+
+tab_corr$tissue<-factor(tab_corr$tissue, levels = c("hair", "buccal", "saliva", "urine"))
+tab_corr$species_name<-as.character(tab_corr$species_name)
+
+tab_corr$species_name<-c(
+  paste(str_sub(tab_corr$species_name[1:40], 1, 1), gsub(tab_corr$species_name[1:40], pattern = ".+ ", replacement = ""), sep = ". "), 
+  tab_corr$species_name[41:44], 
+  paste(str_sub(tab_corr$species_name[45:48], 1, 1), gsub(tab_corr$species_name[45:48], pattern = ".+ ", replacement = ""), sep = ". sp. "), 
+  paste(str_sub(tab_corr$species_name[49:112], 1, 1), gsub(tab_corr$species_name[49:112], pattern = ".+ ", replacement = ""), sep = ". "), 
+  paste(str_sub(tab_corr$species_name[113:136], 1, 1), gsub(tab_corr$species_name[113:136], pattern = ".+ ", replacement = ""), sep = ". sp. "), 
+  paste(str_sub(tab_corr$species_name[137:140], 1, 1), gsub(tab_corr$species_name[137:140], pattern = ".+ ", replacement = ""), sep = ". ")
+  )
+
+tab_corr$species_name<-as.factor(tab_corr$species_name)
+lab_colors<-ifelse(levels(tab_corr$species_name) == 'M. restricta', '#DAA520', 'black')
+lab_colors<-lab_colors[-11]
+lab_colors[1:2]<-"#1E90FF"
+#lab_colors[c(9)]<-"#FFCCCB"
+#lab_colors[16]<-"#B22222"
+
+ggplot(tab_corr, aes(tissue, rho, color=tissue)) + geom_jitter(width = 0.2, size = 2, alpha = 0.7) + scale_color_manual(values =  c("#DAA520", "#B22222", "#FFCCCB", "#1E90FF")) +
+  theme_bw() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2), # may not need, see if looks weird
+                  axis.title.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.position = "none",
+                  legend.text = element_text(size = 12),
+                  panel.grid = element_blank()) +
+  ylim(-1.1,1.1)
+ggsave(filename = here::here("Plots/corrplot-pertissue.png"), width = 6, height = 3, units = "in")
+
+tab_corr %>% 
+  filter(!species_name == "Human endogenous retrovirus") %>%
+  ggplot(aes(species_name, rho, color=tissue)) + geom_jitter(width = 0.1, size = 2.5, alpha = 1) + scale_color_manual(values = c("#DAA520", "#B22222", "#FFCCCB", "#1E90FF")) +
+  facet_grid(rows = vars(tissue)) +
+  theme_bw() +
+            theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2), # may not need, see if looks weird
+                  axis.title.x = element_blank(),
+                  axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3, face = "italic", colour=lab_colors),
+                  axis.text = element_text(size = 12),
+                  axis.ticks.x = element_blank(),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.position = "none",
+                  legend.text = element_text(size = 12),
+                  #panel.grid = element_blank(), 
+                  panel.grid.minor = element_blank(),
+                  panel.grid.major = element_line(size = 0.1)) +
+  ylim(-1.1,1.1)
+ggsave(filename = here::here("Plots/corrplot-persample.png"), width = 8, height = 6, units = "in")
+```
+

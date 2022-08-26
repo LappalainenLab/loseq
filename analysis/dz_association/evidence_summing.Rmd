@@ -1,0 +1,545 @@
+---
+title: "Open Targets Analysis"
+author: "Molly Martorella"
+date: "5/31/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(here)
+library(data.table)
+library(pheatmap)
+library(ComplexHeatmap)
+library(RColorBrewer)
+library(patchwork)
+```
+
+# Inputs
+
+```{r}
+key_path <- "data/samplekey_485.txt"
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold5000000_downsampled5000000_raw.txt" #5e7 threshold
+tpm_path <- "data/downsampled_counts/loseq_allpreps_threshold5000000_downsampled5000000_tpms.txt"
+top_path <- "data/top_donor_tis_loseq.txt"
+
+gtex_cts_path <- "data/gtex/gtex_downsampled_19samps_5e+06_cts.txt"
+gtex_tpms_path <- "data/gtex/gtex_downsampled_19samps_5e+06_tpms.txt"
+gtex_key_path <- "data/gtex/GTEx_Analysis_2017-06-05_v8_Annotations_SampleAttributesDS.txt"
+rep_tissues <- here("data/gtex/representative_tissues.10.txt")
+
+targets_path <- "data/open_targets/220202_20dz_genetargets.txt"
+tis_genes_path <- "data/open_targets/tissue_category_rna_Any_Tissue.tsv"
+
+fig_path <- here("analysis/dz_association/figs/evidence_summing_")
+out_path <- here("analysis/dz_association/")
+
+tis <- c("buccal", "hair", "saliva", "urine")
+colors_path <- "data/gtex_loseq_colors.txt"
+```
+
+# Functions
+
+```{r, echo=FALSE}
+source(here("src/base_functions.R"))
+source(here::here("src/counts_processing_fxns.R"))
+```
+
+# Read in data
+
+```{r}
+key <- fread(here(key_path), data.table = FALSE)
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpm <- fread(here(tpm_path), data.table = FALSE) %>% column_to_rownames("V1")
+top <- fread(here(top_path), data.table = FALSE)
+
+gtex_cts <- fread(here(gtex_cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+gtex_tpm <- fread(here(gtex_tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+gtex_key <- fread(here(gtex_key_path), data.table = FALSE)
+
+sel_tis <- fread(here(rep_tissues), data.table = FALSE) # add kidney cortex, esophagus, spleen, lung, fibroblasts
+sel_tis <- c(sel_tis$SMTSD, "Esophagus - Mucosa", "Kidney - Cortex", "Cells - Cultured fibroblasts", "Lung", "Spleen", "Pancreas", "Heart - Atrial Appendage", "Liver")
+
+targets <- fread(here(targets_path), data.table = FALSE)
+tis_genes <- fread(here(tis_genes_path), data.table = FALSE)
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+colors <- fread(here(colors_path), data.table = FALSE)
+```
+
+
+# Process loseq
+
+```{r}
+# for cross-collection comps:
+loseq_key <- key %>% filter(tissue != "hek", group_name %in% colnames(tpm))
+loseq_cts <- cts[, colnames(cts) %in% loseq_key$group_name]
+loseq_tpm <- tpm[, colnames(tpm) %in% loseq_key$group_name]
+loseq_key <- loseq_key %>% filter(group_name %in% colnames(loseq_cts))
+```
+
+
+```{r}
+# filter out hek, filter for top samples
+key <- key %>% filter(tissue != "hek", group_name %in% top$group_name)
+cts <- cts[, colnames(cts) %in% key$group_name]
+tpm <- tpm[, colnames(tpm) %in% key$group_name]
+key <- key %>% filter(group_name %in% colnames(cts))
+```
+
+
+# Process gtex
+
+```{r}
+# select for gtex tissues of interest
+#sel_tis <- c("Whole Blood", "Artery - Tibial", "Brain - Cortex", "Thyroid", "Lung", "Pancreas", "Colon - Sigmoid", "Small Intestine - Terminal Ileum", "Heart - Left Ventricle", "Liver", "Kidney - Cortex", "Skin - Sun Exposed (Lower leg)")
+
+#gtex_key <- gtex_key %>% filter(SMTSD %in% sel_tis)
+gtex_cts <- gtex_cts[, colnames(gtex_cts) %in% gtex_key$SAMPID]
+gtex_tpm <- gtex_tpm[, colnames(gtex_tpm) %in% gtex_key$SAMPID]
+gtex_key <- gtex_key %>% filter(SAMPID %in% colnames(gtex_cts))
+```
+
+
+# Combine cts/tpms/keys
+
+```{r}
+# keys
+key <- key %>% select(group_name, tissue) %>% rename("group_name" = "sample_id")
+
+gtex_key <- gtex_key %>% select(SAMPID, SMTSD) %>% rename("SAMPID" ="sample_id",
+                                                          "SMTSD" = "tissue")
+
+key_all <- rbind(key, gtex_key)
+
+tissues <- unique(key_all$tissue)
+
+# cts
+cts_all <- merge(cts, gtex_cts, by = 0)
+cts_all <- cts_all %>% column_to_rownames("Row.names")
+
+# tpms
+tpms_all <- merge(tpm, gtex_tpm, by = 0)
+tpms_all <- tpms_all %>% column_to_rownames("Row.names")
+```
+
+
+# Filter counts by tissue
+
+```{r}
+filtered_list <- lapply(tissues, function(x) {
+
+  key_tis <- key_all %>% filter(tissue == x)
+  cts_tis <- cts_all[, colnames(cts_all) %in% key_tis$sample_id]
+  tpms_tis <- tpms_all[, colnames(tpms_all) %in% key_tis$sample_id]
+
+  filt <- filter_counts(raw_cts = cts_tis, tpm_cts = tpms_tis, raw_threshold = 8)
+  return(filt)
+
+})
+
+raw_list <- lapply(filtered_list, "[[", 1)
+tpm_list <- lapply(filtered_list, "[[", 2)
+
+names(raw_list) <- tissues
+names(tpm_list) <- tissues
+```
+
+
+```{r}
+loseq_filtered_list <- lapply(tis, function(x) {
+
+  key_tis <- loseq_key %>% filter(tissue == x)
+  cts_tis <- loseq_cts[, colnames(loseq_cts) %in% key_tis$group_name]
+  tpms_tis <- loseq_tpm[, colnames(loseq_tpm) %in% key_tis$group_name]
+
+  filt <- filter_counts(raw_cts = cts_tis, tpm_cts = tpms_tis, raw_threshold = 8)
+  return(filt)
+
+})
+
+loseq_raw_list <- lapply(loseq_filtered_list, "[[", 1)
+loseq_tpm_list <- lapply(loseq_filtered_list, "[[", 2)
+
+names(loseq_raw_list) <- tis
+names(loseq_tpm_list) <- tis
+```
+
+# Plot number of genes expressed post-filtering
+
+```{r}
+gene_num <- data.frame("tissue" = names(raw_list),
+                       "genes" = unlist(lapply(raw_list, "nrow")))
+
+gene_num %>% ggplot(aes(x = tissue, y = genes, fill = tissue)) +
+  geom_col() +
+  colScale_fill +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  scale_y_continuous(breaks = seq(0, 20000, 2000)) +
+  ggtitle("Number of Genes Expressed after Filtering", subtitle = "Raw cts > 8 and tpms >0.1 in 20% of samples")
+
+ggsave(filename = paste0(fig_path, "genes_expr_per_tissue.png"), width = 7, height = 5)
+ggsave(filename = paste0(fig_path, "genes_expr_per_tissue.pdf"), width = 10, height = 5)
+```
+
+
+# Plot number of disease relevant genes
+
+```{r}
+targets %>%
+  group_by(name) %>%
+  summarise(n = n()) %>%
+  ggplot(aes(x = name, y = n, fill = name)) +
+  geom_col() +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  scale_y_continuous(breaks = seq(0, 8000, 1000), limits = c(0,7500)) +
+  ggtitle("Number of Disease-relevant Genes") +
+  xlab("Disease") +
+  ylab("Genes")
+
+ggsave(filename = paste0(fig_path, "genes_per_20disease.png"), width = 7, height = 5)
+ggsave(filename = paste0(fig_path, "genes_per_20disease.pdf"), width = 7, height = 5)
+```
+
+```{r}
+targets %>% ggplot(aes(x = score)) + geom_histogram() + facet_wrap(~name) + theme_bw() + geom_vline(xintercept = 0.025, color = "red", linetype = "dashed")
+
+targets %>% ggplot(aes(x = evidenceCount)) + geom_histogram() + facet_wrap(~name) + theme_bw() + geom_vline(xintercept = 5, color = "red", linetype = "dashed")
+
+# targets %>%
+#   filter(score >= 0.025) %>% 
+#   group_by(name) %>%
+#   summarise(n = n()) %>%
+#   ggplot(aes(x = name, y = n, fill = name)) +
+#   geom_col() +
+#   theme_bw() +
+#   theme(legend.position = "none",
+#         axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+#   #scale_y_continuous(breaks = seq(0, 6000, 1000)) +
+#   ggtitle("Number of Disease-relevant Genes Passing > 0.025 Evidence") +
+#   xlab("Disease") +
+#   ylab("Genes")
+
+test <- lapply(c(0,5,10,15,20), function(x) {targets %>% filter(evidenceCount >= x) %>% group_by(name) %>%
+        summarise(n = n()) %>%
+        ggplot(aes(x = name, y = n, fill = name)) +
+        geom_col() +
+        theme_bw() +
+        theme(legend.position = "none",
+              axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+        #scale_y_continuous(breaks = seq(0, 7500, 500), limits = c(0,7500)) +
+        scale_y_continuous(breaks = seq(0, 8000, 1000), limits = c(0,7500)) +
+    ggtitle(paste0("Number Genes Passing >= ", x, " evidence sources")) +
+        xlab("Disease") +
+        ylab("Genes")})
+
+out <- test[[1]] + test[[2]] + test[[3]] + test[[4]] + test[[5]]
+
+ggsave(out, filename = paste0(fig_path, "genes_per_20disease_evidence_cutoff.png"), height = 10, width = 15)
+ggsave(test[[2]], filename = paste0(fig_path, "genes_per_20disease_evidence_cutoff_5.png"), height = 5, width = 6)
+ggsave(test[[2]], filename = paste0(fig_path, "genes_per_20disease_evidence_cutoff_5.pdf"), height = 5, width = 7, useDingbats = FALSE)
+```
+
+
+# Analysis
+
+- get median expression level per tissue
+- filter for genes in tissue specific df, then select top X most variable genes where X is the minimum genes captured across tissues
+- calculate summed evidence score (normalized by total disease evidence)
+- plot heatmap and barplot
+
+# Cross-collection disease enrichment
+
+HERE!!!!
+
+
+Need to filter each tpm sample for the top X most expressed genes, then calculate the score, 
+
+```{r}
+# gene_filter <- tis_genes$Ensembl
+# 
+# loseq_tpm_list <- lapply(loseq_tpm_list, function(x) {
+# 
+#   gene_select <- intersect(rownames(x), gene_filter)
+#   tis_specific <- x[gene_select,]
+#   return(tis_specific)
+# 
+# })
+```
+
+
+```{r}
+# filter for top X most expressed, where X is minimum genes captured across all tissues
+
+# min_genes <- min(unlist(lapply(loseq_tpm_list, function(x) {length(x)}))) # 3361 buccal
+
+# loseq_tpm_list <- lapply(loseq_tpm_list, function(x) {
+#   top <- sort(x, decreasing = TRUE)[1:min_genes]
+#   return(top)
+# })
+# 
+# loseq_top_genes <- lapply(loseq_tpm_list, function(x) {
+# 
+#   mat <- as.matrix(x)
+#   meds <- rowMedians(mat)
+#   names(meds) <- rownames(x)
+#   top <- sort(meds, decreasing = TRUE)[1:min_genes] # take top median most expressed per tissue
+#   return(names(top))
+# 
+# })
+```
+
+filter for genes present in a tissue, add up the evidence scores for those genes, divide by the total possible evidence score to normalize across the diseases
+may z score normalize within a disease for plotting
+
+```{r}
+# evidence_cutoff <- 5
+# all_possible_genes <- Reduce(function(x, y) {union(x, y)}, loseq_top_genes)
+# 
+# scores_df <- data.frame(row.names = unique(targets$name))
+#   
+# for (i in 1:length(top_genes)) {
+#     
+#     for (d in unique(targets$name)) {
+#       
+#       # get vector of disease genes and scores
+#       dz_genes <- targets %>% filter(name == d,
+#                                      evidenceCount >= evidence_cutoff,
+#                                      targetId %in% all_possible_genes) %>% pull(score) # get genes for a dz
+#       names(dz_genes) <- targets %>% filter(name == d,
+#                                             evidenceCount >= evidence_cutoff,
+#                                             targetId %in% all_possible_genes) %>% pull(targetId)
+#       
+#       # get total disease score (filter then sum(score))
+#       dz_score <- sum(dz_genes)
+#       
+#       # get tissue score (filter for genes in top tissue genes, then sum score)
+#       tissue_genes <- intersect(names(dz_genes), top_genes[[i]])
+#       tis_score <- sum(dz_genes[tissue_genes])
+#       
+#       # divide to normalize
+#       score <- tis_score/dz_score
+#       
+#       # add to scores df
+#       scores_df[d, names(top_genes[i])] <- round(score, digits = 2)
+#       
+#     }
+# 
+# }
+
+```
+
+
+
+
+
+
+
+
+
+# Filter median cts for tissue specific gene expression (using file); select top X most expressed (X = minimum captured across tis)
+
+```{r}
+# get median expression per tissue of genes listed as tissue specific
+
+gene_filter <- tis_genes$Ensembl
+
+med_expr <- lapply(tpm_list, function(x) {
+  
+  mat <- as.matrix(x)
+  meds <- rowMedians(mat)
+  names(meds) <- rownames(x)
+  gene_select <- intersect(names(meds), gene_filter)
+
+  tis_specific <- meds[gene_select]
+  
+  return(tis_specific)
+  
+})
+```
+
+```{r}
+p <- data.frame("tissue" = names(med_expr),
+                "genes" = unlist(lapply(med_expr, "length")))
+
+p %>% ggplot(aes(x = tissue, y = genes, fill = tissue)) +
+  geom_col() +
+  colScale_fill +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  scale_y_continuous(breaks = seq(0, 20000, 1000)) +
+  ggtitle("Number of Genes Expressed after Filtering", subtitle = "Overlap with HPA tissue elevated genes")
+
+ggsave(filename = paste0(fig_path, "genes_expr_per_tissue_HPA.png"), width = 7, height = 5)
+ggsave(filename = paste0(fig_path, "genes_expr_per_tissue_HPA.pdf"), width = 10, height = 5)
+```
+
+
+```{r}
+# filter for top X most expressed, where X is minimum genes captured across all tissues
+
+min_genes <- min(unlist(lapply(med_expr, function(x) {length(x)}))) # 3361 buccal
+
+med_expr <- lapply(med_expr, function(x) {
+  top <- sort(x, decreasing = TRUE)[1:min_genes]
+  return(top)
+})
+
+top_genes <- lapply(med_expr, function(x) {
+  top <- sort(x, decreasing = TRUE)[1:min_genes] # ~ 1000-1500 of 3361 seem to be non-overlapping between tissue pairs
+  return(names(top))
+})
+```
+
+
+# Get summed disease gene capture scores and plot
+
+filter for genes present in a tissue, add up the evidence scores for those genes, divide by the total possible evidence score to normalize across the diseases
+may z score normalize within a disease for plotting
+
+```{r}
+evidence_cutoff <- 5
+all_possible_genes <- Reduce(function(x, y) {union(x, y)}, top_genes)
+
+scores_df <- data.frame(row.names = unique(targets$name))
+  
+for (i in 1:length(top_genes)) {
+    
+    for (d in unique(targets$name)) {
+      
+      # get vector of disease genes and scores
+      dz_genes <- targets %>% filter(name == d,
+                                     evidenceCount >= evidence_cutoff,
+                                     targetId %in% all_possible_genes) %>% pull(score) # get genes for a dz
+      names(dz_genes) <- targets %>% filter(name == d,
+                                            evidenceCount >= evidence_cutoff,
+                                            targetId %in% all_possible_genes) %>% pull(targetId)
+      
+      # get total disease score (filter then sum(score))
+      dz_score <- sum(dz_genes)
+      
+      # get tissue score (filter for genes in top tissue genes, then sum score)
+      tissue_genes <- intersect(names(dz_genes), top_genes[[i]])
+      tis_score <- sum(dz_genes[tissue_genes])
+      
+      # divide to normalize
+      score <- tis_score/dz_score
+      
+      # add to scores df
+      scores_df[d, names(top_genes[i])] <- round(score, digits = 2)
+      
+    }
+
+}
+
+```
+
+```{r}
+
+sampleDistMatrix <- as.matrix(scores_df)
+#mat <- t(scale(t(sampleDistMatrix)))
+mat <- sampleDistMatrix
+
+pdf(file = paste0(fig_path, "summed_scores_hpa_evidence5_alltis.pdf"), height = 10, width = 22)
+
+Heatmap(mat,
+        col=colorRampPalette(brewer.pal(8, "Reds"))(length(seq(0,1,0.1))),
+        rect_gp = gpar(col = "white", lwd = 2),
+        border = "black",
+        cluster_columns = TRUE,
+        column_title = "Summed evidence scores (HPA tissue-elevated genes, evidence count >= 5)",
+        show_parent_dend_line = FALSE,
+        clustering_distance_rows = "euclidean",
+        clustering_distance_columns = "euclidean",
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          grid.text(sprintf("%.2f", mat[i, j]), x, y, gp = gpar(col = "black", fontsize = 10))
+        })
+
+dev.off()
+```
+
+```{r}
+sampleDistMatrix <- as.matrix(scores_df[, colnames(scores_df) %in% c(sel_tis, tis[tis != "saliva"])])
+#sampleDistMatrix <- as.matrix(scores_df[, colnames(scores_df) %in% c(sel_tis, tis[-3])])
+#mat <- t(scale(t(sampleDistMatrix)))
+mat <- sampleDistMatrix
+
+pdf(file = paste0(fig_path, "summed_scores_hpa_evidence5_seltis.pdf"), height = 10, width = 12)
+
+Heatmap(mat,
+        col=colorRampPalette(brewer.pal(8, "Reds"))(length(seq(0,1,0.1))),
+        rect_gp = gpar(col = "white", lwd = 2),
+        border = "black",
+        cluster_columns = TRUE,
+        column_title = "Summed evidence scores (HPA tissue-elevated genes, evidence count >= 5)",
+        show_parent_dend_line = FALSE,
+        clustering_distance_rows = "euclidean",
+        clustering_distance_columns = "euclidean",
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          grid.text(sprintf("%.2f", mat[i, j]), x, y, gp = gpar(col = "black", fontsize = 10))
+        })
+
+dev.off()
+```
+
+# barplot
+
+```{r}
+bplot_df <- scores_df[, colnames(scores_df) %in% c(tis, "Whole Blood", "Brain - Cortex", "Kidney - Cortex", "Skin - Sun Exposed (Lower leg)")]
+
+bplot_df <- bplot_df %>% rownames_to_column("disease") %>% 
+  filter(disease %in% c("Alzheimer's disease", "mood disorder", "multiple sclerosis", "systemic lupus erythematosus", "psoriasis", "hypertension", "lung disease", "kidney disease", "osteoporosis", "liver disease")) %>% 
+  pivot_longer(cols = urine:`Brain - Cortex`, names_to = "tissue", values_to = "score")
+
+colors2 <- colors %>% filter(tissue_name %in% bplot_df$tissue)
+myColors2 <- as.vector(paste0("#", colors2$tissue_color_hex))
+names(myColors2) <- colors2$tissue_name
+myColors2["saliva"] <- "#F08080"
+myColors2 <- myColors2[sort(names(myColors2))]
+
+bplot_df %>% 
+  ggplot(aes(x = reorder(disease, score), y = score, fill = tissue)) +
+  geom_col(position = position_dodge()) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  scale_fill_manual(values = myColors2)
+
+ggsave(filename = paste0(fig_path, "10dz_8tis_barplot.png"), height = 4, width = 9)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,435 @@
+---
+title: "OMIM Analysis"
+author: "Molly Martorella"
+date: "5/23/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+```
+
+# Inputs
+
+```{r}
+meta_seq_path <- "data/samplekey_485.txt"
+gtex_key_path <- here("data/gtex/GTEx_Analysis_2017-06-05_v8_Annotations_SampleAttributesDS.txt")
+
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_tpms.txt"
+gtex_path <- "data/gtex/gtex_downsampled_75samps_5e+06_tpms.txt"
+
+out_path <- here("analysis/omim/")
+fig_path <- here("analysis/omim/figs/omim_lod_")
+
+omim_path <- "data/omim/genemap2.txt"
+mimtitles_path <- "data/omim/mimTitles.txt"
+
+tis <- c("buccal", "hair", "saliva", "urine")
+
+rep_tis_path <- "data/gtex/representative_tissues.10.txt"
+```
+
+# Functions
+
+```{r, echo=FALSE}
+source(here("src/base_functions.R"))
+```
+
+# Read in data
+
+```{r}
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+gtex_key <- fread(gtex_key_path, data.table = FALSE)
+
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+gtex <- fread(here(gtex_path), data.table = FALSE)
+
+omim <- fread(here(omim_path), data.table = FALSE) %>% janitor::clean_names() # missing end is just comments about the file not data
+mimtitles <- fread(here(mimtitles_path), data.table = FALSE) %>% janitor::clean_names() # missing end is just comments about the file not data
+
+gtex_tis <- fread(here(rep_tis_path), data.table = FALSE) # add kidney cortex, esophagus, spleen, lung, fibroblasts
+gtex_tis <- c(gtex_tis$SMTSD, "Esophagus - Mucosa", "Kidney - Cortex", "Cells - Cultured fibroblasts", "Lung", "Spleen")
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[c(gtex_tis, tis)]
+```
+
+# Filter meta for samples passing cts threshold and loseq-only
+
+```{r}
+meta_seq <- meta_seq %>% filter(prep == "loseq")
+
+tpms <- tpms[, colnames(tpms) %in% meta_seq$group_name]
+
+meta_seq <- meta_seq %>% filter(group_name %in% colnames(tpms))
+```
+
+# Filter for known Mendelian OMIM genes
+
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC539987/
+
+Asterisk --> 16388 genes (gene with known sequence) (16355 with genemap vs mim2gene)
+Plus --> only 27 genes (gene with known sequence and phenotype)
+Number Sign --> no genes (phenotype description, molecular basis known)
+Percent --> no genes (unknown molecular basis)
+NULL --> 20 genes (other, phenotypes with suspected mendelian basis) (18 with genemap)
+
+```{r}
+# nums <- mimtitles %>% filter(number_prefix == "Percent") %>% pull(mim_number)
+# genes <- omim %>% filter(mim_number %in% nums) %>% filter(ensembl_gene_id != "") %>% pull(ensembl_gene_id)
+
+gene_df <- omim %>% filter(phenotypes != "", ensembl_gene_id != "") %>% select(ensembl_gene_id, phenotypes) # 4680 genes
+```
+
+```{r}
+genes <- gene_df %>% pull(ensembl_gene_id) # 4680 genes
+```
+
+# Set up list of samples per tissue
+
+```{r}
+samps <- lapply(tis, function(x) {
+  meta_seq %>% filter(tissue == x) %>% pull(group_name)
+})
+
+names(samps) <- tis
+```
+
+# Cross-collection threshold passing
+
+make df with: group_name, donor_id, collection_number, tissue, proportion (of genes passing 0.1 threshold)
+
+```{r}
+cross_thresh <- meta_seq %>% filter(tissue != "hek") %>% 
+  select(group_name, donor_id, collection_number, tissue) %>% 
+  column_to_rownames("group_name") %>% 
+  mutate("proportion" = NA)
+
+for (s in rownames(cross_thresh)) {
+  
+  genes_passing <- rownames(tpms[tpms[,c(s)] >= 0.1,])
+  p <- length(intersect(genes_passing, genes))/length(genes)
+  cross_thresh[s, "proportion"] <- p
+  
+}
+
+cross_thresh <- cross_thresh %>% group_by(donor_id, tissue, collection_number) %>% summarise(proportion = mean(proportion)) # collapses technical replicates
+```
+
+
+# Get gene median expression level per tissue
+
+```{r}
+meds <- data.frame(row.names = rownames(tpms))
+
+for (i in 1:length(samps)) {
+  
+  temp <- as.matrix(tpms[, colnames(tpms) %in% samps[[i]]])
+  meds[, names(samps[i])] <- matrixStats::rowMedians(temp)
+  
+}
+
+meds[, "gene_id"] <- rownames(tpms)
+```
+
+```{r}
+meds <- meds %>% pivot_longer(cols = buccal:urine, names_to = "tissue", values_to = "median_expr")
+```
+
+# Iteratively filter for genes with median expression passing thresholds, intersect with OMIM vector
+
+make df with: threshold, tissue, gene_number, total_genes, proportion
+
+```{r}
+out_df <- data.frame(row.names = tis)
+
+thresholds <- c(0.1, 1, 5, 10, 20)
+
+for (i in tis) {
+  
+  temp <- meds %>% filter(tissue == i)
+  
+  for (t in thresholds) {
+  
+    # get rownames, intersect with omim, then take length and output to df
+    
+    genes_passing <- temp %>% filter(median_expr >= t) %>% pull(gene_id)
+    
+    out_df[i, paste0("threshold_", t)] <- length(intersect(genes_passing, genes)) 
+    
+  }
+  
+}
+```
+
+# Get genes passing threshold per sample/tissue, intersect with omim
+
+make df with: rownames are group_name, columns are tissue, threshold_0.1 etc. with gene number filled in
+
+```{r}
+thresholds <- c(0.1, 1, 5, 10, 20)
+genes_use <- intersect(genes, rownames(tpms))
+
+test <- lapply(1:length(samps), function(x) {
+  
+  df <- data.frame(row.names = samps[[x]],
+                   "tissue" = rep(names(samps[x]), times = length(samps[[x]])))
+  
+  for (s in samps[[x]]) {
+    
+    temp <- tpms[genes_use, s] # get omim genes and sample
+    
+    for (t in thresholds) {
+
+      df[s, paste0("threshold_", t)] <- sum(temp >= t)
+
+    }
+
+  }
+  
+  return(df)
+  
+})
+
+out_df_all <- rbindlist(test) # 200 samples because removes hek
+```
+
+# Format for plotting - ALL ANALYSIS
+
+pivot longer adding threshold cagtegory column and gene_number, then summarize mean and sd gene number grouped by tissue/threshold
+
+```{r}
+plot_df_all <- out_df_all %>% pivot_longer(cols = threshold_0.1:threshold_20, names_to = "threshold", values_to = "gene_ct")
+
+plot_df_all$total_genes <- length(genes_use)
+
+plot_df_all$proportion <- plot_df_all$gene_ct/plot_df_all$total_genes
+
+plot_df_all$threshold <- gsub(plot_df_all$threshold, pattern = "threshold_", replacement = "")
+
+plot_df_all_sum <- plot_df_all %>% group_by(tissue, threshold) %>% summarise(mean_ct = round(mean(gene_ct), digits = 2),
+                                                                             sd_ct = round(sd(gene_ct), digits = 2),
+                                                                             mean_prop = round(mean(proportion), digits = 2),
+                                                                             sd_prop = round(sd(proportion), digits = 2))
+```
+
+# Boxplot
+
+```{r}
+plot_df_all %>% 
+  mutate(threshold = factor(threshold, levels = c("0.1", "1", "5", "10", "20"))) %>% 
+  ggplot(aes(x = threshold, y = proportion, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA) +
+  #geom_point(position = position_jitterdodge(jitter.width = 0.2), shape = 1, size = 1, alpha = 0.5) +
+  theme_bw() +
+  scale_fill_manual(values = myColors) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = 2),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12)) +
+  xlab("TPM threshold") +
+  ggtitle("OMIM gene capture by noninvasive tissues")
+
+ggsave(filename = paste0(fig_path, "all_gene_proportion.png"), height = 4, width = 7)
+```
+
+```{r}
+plot_df_all %>% 
+  mutate(threshold = factor(threshold, levels = c("0.1", "1", "5", "10", "20"))) %>% 
+  ggplot(aes(x = threshold, y = gene_ct, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitterdodge(jitter.width = 0.2), shape = 1, size = 1, alpha = 0.5) +
+  theme_bw() +
+  scale_fill_manual(values = myColors) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = 2),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12)) +
+  xlab("TPM threshold") +
+  ggtitle("OMIM gene capture by noninvasive tissues") +
+  ylab("Gene number") +
+  scale_y_continuous(breaks = seq(0, 15000, 2500))
+
+ggsave(filename = paste0(fig_path, "all_gene_number.png"), height = 4, width = 7)
+```
+
+
+
+# Format for plotting - MEDIAN ANALYSIS
+
+```{r}
+plot_df <- out_df %>% rownames_to_column("tissue") %>% pivot_longer(cols = threshold_0.1:threshold_20, names_to = "threshold", values_to = "gene_ct")
+
+plot_df$total_genes <- length(genes_use)
+
+plot_df$proportion <- plot_df$gene_ct/plot_df$total_genes
+
+plot_df$threshold <- gsub(plot_df$threshold, pattern = "threshold_", replacement = "")
+```
+
+# Clustered barplot, x axis threshold, y is ct and proportion, colored by tissue
+
+```{r}
+plot_df %>% 
+  mutate(threshold = factor(threshold, levels = c("0.1", "1", "5", "10", "20"))) %>% 
+  ggplot(aes(x = threshold, y = gene_ct, fill = tissue)) +
+  geom_col(position = "dodge") +
+  theme_bw() + 
+  scale_fill_manual(values = myColors) +
+  ggtitle("OMIM genes captured") +
+  ylab("Gene number") +
+  xlab("Median TPM threshold")
+
+ggsave(filename = paste0(fig_path, "med_gene_number.png"), width = 7, height = 4)
+```
+
+```{r}
+plot_df %>% 
+  mutate(threshold = factor(threshold, levels = c("0.1", "1", "5", "10", "20"))) %>% 
+  ggplot(aes(x = threshold, y = proportion, fill = tissue)) +
+  geom_col(position = "dodge") +
+  theme_bw() + 
+  scale_fill_manual(values = myColors) +
+  ggtitle("OMIM genes captured") +
+  ylab("Proportion") +
+  xlab("Median TPM threshold")
+
+ggsave(filename = paste0(fig_path, "med_gene_proportion.png"), width = 7, height = 4)
+```
+
+
+# Cross-collection plot
+
+Tissues/donors with 4 complete collections (matching cell type cross-collection analysis):
+
+```{r}
+donor_labs <- paste0("donor", seq(1, length(unique(cross_thresh$donor_id)), 1))
+names(donor_labs) <- unique(cross_thresh$donor_id)
+
+(c <- cross_thresh %>% 
+    filter(donor_id %in% names(donor_labs[c(5,7,9,10,13,15,16,17,19)]),
+           tissue != "saliva") %>% 
+  ggplot(aes(x = collection_number, y = proportion, color = tissue)) +
+    geom_point(size = 1) +
+  geom_line() +
+  theme_bw() +
+  #theme(panel.grid = element_blank()) +
+  theme(legend.position = "none") +
+  labs(x = "Collection Number", title = "OMIM gene capture TPM >= 0.1") +
+  scale_color_manual(values = myColors[tis]) +
+    scale_y_continuous(limits = c(0,1)) +
+  facet_grid(tissue ~ donor_id, labeller = labeller(donor_id = donor_labs)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12)))
+
+```
+
+```{r}
+ggsave(filename = paste0(fig_path, "cross_collection_complete_collections.png"), plot = c, width = 12, height = 6)
+ggsave(filename = paste0(fig_path, "cross_collection_complete_collections.pdf"), plot = c, width = 12, height = 6, useDingbats = FALSE)
+```
+
+
+All collections:
+
+
+```{r}
+(c_all <- cross_thresh %>% 
+  ggplot(aes(x = collection_number, y = proportion, color = tissue)) +
+    geom_point(size = 1) +
+  geom_line() +
+  theme_bw() +
+  #theme(panel.grid = element_blank()) +
+  theme(legend.position = "none") +
+  labs(x = "Collection Number", title = "OMIM gene capture TPM >= 0.1") +
+  scale_color_manual(values = myColors[tis]) +
+    scale_y_continuous(limits = c(0,1)) +
+  facet_grid(tissue ~ donor_id, labeller = labeller(donor_id = donor_labs)) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.major = element_line(size=0.2),
+        panel.grid.minor = element_line(size=0.1)))
+```
+
+```{r}
+ggsave(filename = paste0(fig_path, "cross_collection_all.png"), plot = c_all, width = 18, height = 6)
+ggsave(filename = paste0(fig_path, "cross_collection_all.pdf"), plot = c_all, width = 18, height = 6, useDingbats = FALSE)
+```
+
+```{r}
+donor_labs2 <- gsub(donor_labs, pattern = "donor", replacement = "")
+
+(b <- cross_thresh %>% 
+    filter(tissue != "saliva") %>% 
+  ggplot(aes(x = donor_id, y = proportion, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(size = 1, width = 0.1) +
+  theme_bw() +
+  #theme(panel.grid = element_blank()) +
+  theme(legend.position = "none") +
+  labs(x = "Donor", title = "OMIM gene capture TPM >= 0.1") +
+  scale_fill_manual(values = myColors[tis]) +
+    scale_y_continuous(limits = c(0,1), breaks = seq(0,1,0.2)) +
+   scale_x_discrete(labels = donor_labs2) +
+  #facet_grid(tissue ~ donor_id, labeller = labeller(donor_id = donor_labs)) +
+  facet_wrap(~tissue, nrow = 1, scales = "free_x") +
+   theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+         axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1)))
+```
+
+
+```{r}
+ggsave(filename = paste0(fig_path, "cross_collection_all_boxplot.png"), plot = b, width = 12, height = 4.5)
+ggsave(filename = paste0(fig_path, "cross_collection_all_boxplot.pdf"), plot = b, width = 12, height = 4.5, useDingbats = FALSE)
+```
+
+
+
+
+
+
+
+

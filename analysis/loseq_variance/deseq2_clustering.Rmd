@@ -1,0 +1,264 @@
+---
+title: "Deseq2 clustering"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_downsampled2500000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold2500000_downsampled2500000_tpms.txt"
+
+out_path <- "analysis/qc/"
+fig_path <- here("analysis/loseq_variance/figs/deseq2_clustering_")
+
+tis <- c("buccal", "hair", "saliva", "urine")
+```
+
+# Functions
+
+```{r, echo=FALSE}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+```
+
+# Select top samples per tissue, remove hek
+
+```{r}
+meta_seq <- meta_seq %>% filter(group_name %in% colnames(cts),
+                                tissue != "hek",
+                                prep == "loseq")
+
+cts <- cts[, colnames(cts) %in% meta_seq$group_name]
+tpms <- tpms[, colnames(tpms) %in% meta_seq$group_name]
+
+# top_samps <- meta_seq %>% filter(highest_p_depth_samp == TRUE, tissue != "hek") %>% pull(group_name)
+# 
+# cts <- cts[, top_samps]
+# tpms <- tpms[, top_samps]
+# meta_seq <- meta_seq %>% filter(group_name %in% top_samps)
+```
+
+# Filter counts
+
+```{r}
+# filt <- lapply(tis, function(x) {
+#   
+#   cts_tis <- cts[, colnames(cts) %in% meta_seq[meta_seq$tissue == x,]$group_name]
+#   tpms_tis <- tpms[, colnames(cts) %in% meta_seq[meta_seq$tissue == x,]$group_name]
+#   
+#   out <- filter_counts(raw_cts = cts_tis, tpm_cts = tpms_tis, raw_threshold = 8)
+#   
+# })
+# 
+# filt <- lapply(filt, function(x) {
+#   lapply(x, function(y) {y %>% rownames_to_column("gene_ids")})
+# })
+# 
+# cts_filt <- lapply(filt, "[[", 1)
+# tpms_filt <- lapply(filt, "[[", 2)
+#   
+# cts_filt <- Reduce(function(x, y) {merge(x = x, y = y, by = "gene_ids")}, cts_filt) # 7022 genes
+# cts_filt <- cts_filt %>% column_to_rownames("gene_ids")
+# 
+# tpms_filt <- Reduce(function(x, y) {merge(x = x, y = y, by = "gene_ids")}, tpms_filt)
+# tpms_filt <- tpms_filt %>% column_to_rownames("gene_ids")
+```
+
+```{r}
+#test <- include_raw(x = cts, counts = 8) # includes 2x the # of genes, less stringent to filter across tissues?
+```
+
+
+# Normalize counts
+
+```{r}
+meta_sel <- meta_seq %>% column_to_rownames("group_name")
+
+out <- dds_norm(raw_cts = cts, key_df = meta_sel, dds_design = c("~1", "tissue")) # do without filter
+
+list2env(out, envir = .GlobalEnv)
+```
+
+
+# PCA
+
+```{r}
+rv <- rowVars(assay(vsd))
+select <- order(rv, decreasing = TRUE)[seq_len(min(500, length(rv)))] # select top 500 most variable genes
+```
+
+```{r}
+pca <- prcomp(t(assay(vsd)[select,]), center = TRUE, scale. = TRUE)
+
+d <- pca$x # pulls PC dataframe
+
+percentVar <- round(pca$sdev^2/sum(pca$sdev^2), digits =3)
+```
+
+```{r}
+d <- merge(d, meta_sel, by = 0)
+```
+
+
+# Plot PCA
+
+Variance explained:
+
+```{r}
+pvar <- as.data.frame(percentVar)
+pvar <- pvar %>% rownames_to_column("PC_num") %>% mutate(PC_num = as.numeric(PC_num))
+
+(v <- pvar %>% 
+  filter(PC_num <= 10) %>% 
+  ggplot(aes(x = PC_num, y = percentVar*100)) +
+      labs(x = "Expression PC",
+           #title = "Variance Explained",
+           y = "Percent") +
+      geom_line() +
+      geom_point(pch = 21, fill = "white") +
+  theme_bw() +
+  scale_x_continuous(breaks = seq(0,20,1)) +
+  theme(panel.grid.minor = element_blank()) +
+  scale_y_continuous(breaks = seq(0, 70, 5)))
+
+ggsave(filename = paste0(fig_path, "percentVar.png"), plot = v)
+```
+
+Tissue PCA:
+
+```{r}
+(p12 <- d %>% ggplot(aes(x = PC1, y = PC2, color = tissue)) +
+  geom_point(size = 1.5, alpha = 0.7) +
+  xlab(paste0("PC1: ", percentVar[1]*100, "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2]*100, "% variance")) +
+  #ggtitle("Top tissue sample per donor PCA") +
+  theme_bw() +
+  scale_colour_manual(name = "tissue", values = myColors, drop = TRUE) +
+  stat_ellipse(level = 0.95))
+
+ggsave(filename = paste0(fig_path, "PC1_PC2.png"), plot = p12)
+write.table(d, file = here("analysis/final_figs/inputs/fig2_MAIN_loseq-only_pca.txt"), sep = "\t")
+saveRDS(percentVar, file = here("analysis/final_figs/inputs/fig2_MAIN_loseq-only_pca_var.rds"))
+```
+
+```{r}
+(p23 <- d %>% ggplot(aes(x = PC2, y = PC3, color = tissue)) +
+  geom_point(size = 1.5, alpha = 0.7) +
+  xlab(paste0("PC2: ", percentVar[2]*100, "% variance")) +
+  ylab(paste0("PC3: ", percentVar[3]*100, "% variance")) +
+  #ggtitle("Top tissue sample per donor PCA") +
+  theme_bw() +
+  scale_colour_manual(name = "tissue", values = myColors, drop = TRUE) +
+  stat_ellipse(level = 0.95))
+
+ggsave(filename = paste0(fig_path, "PC2_PC3.png"), plot = p23)
+```
+
+```{r}
+(p34 <- d %>% ggplot(aes(x = PC3, y = PC4, color = tissue)) +
+  geom_point(size = 1.5, alpha = 0.7) +
+  xlab(paste0("PC3: ", percentVar[3]*100, "% variance")) +
+  ylab(paste0("PC4: ", percentVar[4]*100, "% variance")) +
+  #ggtitle("Top tissue sample per donor PCA") +
+  theme_bw() +
+  scale_colour_manual(name = "tissue", values = myColors, drop = TRUE) +
+  stat_ellipse(level = 0.95))
+
+ggsave(filename = paste0(fig_path, "PC3_PC4.png"), plot = p34)
+```
+
+# PC correlation with meta vars
+
+```{r}
+pc_num <- 5
+pval_thresh <- 0.05/pc_num
+```
+
+```{r}
+res <- data.frame(pc = 1:pc_num,
+                  tissue = NA,
+                  donor_id = NA,
+                  collection_number = NA,
+                  #extraction_number = NA,
+                  mapping_rate = NA,
+                  exonic_rate = NA,
+                  GC_content = NA,
+                  duplicate_rate = NA,
+                  #mean_3_bias = NA,
+                  r_rna_rate = NA,
+                  stringsAsFactors = F)
+
+#as.factor(meta_sel$extraction_number) # this is correlated with tissue
+#+ meta_sel$mean_3_bias # this is generally correlated with tissue, and I want an even # of vars :D..
+
+for (i in 1:nrow(res)) {
+  m <- lm(d[, (i+1)] ~ as.factor(meta_sel$tissue) + as.factor(meta_sel$donor_id) + as.factor(meta_sel$collection_number) + meta_sel$mapping_rate + meta_sel$p_exons_total + meta_sel$gc_content_r1 + meta_sel$duplicate_rate_of_mapped_excluding_globins + meta_sel$r_rna_rate)
+  a <- anova(m)
+  res[i, 2:11] <- c(a$`Pr(>F)`[1], a$`Pr(>F)`[2], a$`Pr(>F)`[3], a$`Pr(>F)`[4], a$`Pr(>F)`[5], a$`Pr(>F)`[6], a$`Pr(>F)`[7], a$`Pr(>F)`[8], a$`Pr(>F)`[9], a$`Pr(>F)`[10])
+}
+
+res <- res %>% 
+  pivot_longer(cols = tissue:r_rna_rate, names_to = "variable", values_to = "pval") %>% 
+  mutate(sig = ifelse(pval <= pval_thresh, TRUE, FALSE),
+         variable = factor(variable, levels = c("tissue", "donor_id", "collection_number", "extraction_number", "mapping_rate", "exonic_rate", "duplicate_rate", "r_rna_rate", "GC_content", "mean_3_bias")))
+
+(r2 <- ggplot(res, aes(x = pc, y = -log(pval, base = 10), color = sig)) +
+  labs(x = "Expression PC",
+       y = "-log10(p-value)",
+       color = "Significant") +
+  geom_point(aes(color = sig)) +
+  scale_x_continuous(breaks = 1:20) +
+  #scale_y_continuous(limits = c(0,1)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  scale_color_manual(values = c("black", "indianred"), drop = TRUE) +
+  facet_wrap(~variable, nrow = 2))
+
+ggsave(filename = paste0(fig_path, "meta_vars_r2.png"), plot = r2)
+```
+
+```{r}
+all <- ((p12 + p23 + v) / r2) + plot_layout(guides = "collect")
+
+ggsave(filename = paste0(fig_path, "PCA_all.png"), plot = all, width = 11, height = 7)
+```
+
+```{r}
+all_no <- ((p12 + p23 + v)) + plot_layout(guides = "collect")
+
+ggsave(filename = paste0(fig_path, "PCA_all_no_r2.png"), plot = all_no, width = 11, height = 3.5)
+```
+

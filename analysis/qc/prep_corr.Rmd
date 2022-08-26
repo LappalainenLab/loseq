@@ -1,0 +1,191 @@
+---
+title: "Prep correlation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(here)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_tpms.txt"
+
+out_path <- "analysis/qc/"
+fig_path <- here("analysis/qc/figs/prep_corr_")
+
+tis <- c("buccal", "hair", "hek", "saliva", "urine")
+```
+
+# Functions
+
+```{r}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+source(here("src/gene_expr_filt_bytis.R"))
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+source(here::here("src/gtex_loseq_colors.R"))
+```
+
+# Filter counts
+
+```{r}
+meta_seq <- meta_seq %>% filter(group_name %in% colnames(tpms))
+
+tpms <- filter_tpms_by_tissue(expr_mat = tpms, key_df = meta_seq, key_df_id_col = "group_name", tis_vector = tis, key_df_tis_col = "tissue")
+
+tpm_filt <- tpms[[1]] # 13,416 genes
+```
+
+# Clean data for replicates
+
+```{r}
+meta_reps <- meta_seq %>%
+  mutate(prep = ifelse(prep == "loseq" & replicate %in% c(0,1), "loseq_replicate_1", prep),
+         prep = ifelse(prep == "loseq" & replicate == 2, "loseq_replicate_2", prep)) %>% 
+  filter(prep != "loseq",
+         replicate != 3)
+```
+
+```{r}
+donor_col_tis_samps <- meta_reps %>% group_by(donor_col_tis) %>% summarise(n = n()) %>% filter(n >= 2) %>% pull(donor_col_tis)
+
+meta_reps <- meta_reps %>% filter(donor_col_tis %in% donor_col_tis_samps)
+```
+
+```{r}
+# this is because need to compare the correct replicates, not comparing loseq replicates to smartseq when not replicated in smartseq etc.. only compare the actually paired samples
+
+prep_comp <- meta_reps %>% group_by(donor_col_tis) %>% 
+  mutate(prep = factor(prep, levels = c("loseq_replicate_1", "loseq_replicate_2", "illumina", "smartseq"))) %>%
+  arrange(prep) %>% 
+  mutate(prep = as.character(prep)) %>% 
+  filter(tissue != "hek") %>% 
+  select(donor_col_tis, prep) %>%
+  pivot_wider(names_from = donor_col_tis, values_from = prep)
+
+prep_comp <- apply(prep_comp, 2, function(x) sapply(x, function(x) paste(unlist(x), collapse=".")))
+
+prep_comp <- as.data.frame(prep_comp) %>% rownames_to_column("donor_col_tis")
+
+hek <- meta_reps %>% filter(tissue == "hek") %>% 
+  mutate(prep_comp = "hek_comp")
+
+meta_reps <- merge(meta_reps, prep_comp)
+
+meta_reps <- rbind(hek, meta_reps)
+```
+
+```{r}
+group_list <- meta_reps %>% 
+  group_by(prep, prep_comp, tissue) %>% 
+  group_split()
+
+names <- meta_reps %>% 
+  group_by(prep, prep_comp, tissue) %>% 
+  group_keys() %>% # creates df with columns prep and prep_comp
+  unite(col = "group", prep, prep_comp, tissue, sep = "-") %>% # concatenates columns
+  pull(group) # gets character vector of names
+
+names(group_list) <- names
+```
+
+# Calculate median TPMs per tissue/prep
+
+```{r}
+med_tpms <- data.frame(row.names = rownames(tpm_filt))
+
+tpms_reps <- tpm_filt[, colnames(tpm_filt) %in% meta_reps$group_name] # select for replicates in expr mat
+
+for (i in 1:length(group_list)) {
+  
+  samps <- tpms_reps[,colnames(tpms_reps) %in% group_list[[i]]$group_name]
+  
+  med_tpms[,names(group_list[i])] <- rowMedians(as.matrix(samps))
+  
+}
+```
+
+# Plot
+
+```{r}
+med_tpms_long <- med_tpms %>% 
+  rownames_to_column("geneid") %>% 
+  pivot_longer(cols = -geneid, names_to = "temp", values_to = "expression") %>% 
+  separate(temp, into = c("prep", "prep_comp", "tissue"), sep  = "-") %>% # separate is slow
+  pivot_wider(names_from = prep, values_from = expression) %>%
+  pivot_longer(cols = c("loseq_replicate_2", "illumina", "smartseq"), names_to = "replicate_prep", values_to = "replicate_expr")
+
+med_tpms_long <- med_tpms_long[complete.cases(med_tpms_long),]
+
+med_tpms_long <- med_tpms_long %>% 
+  mutate(replicate_prep = ifelse(replicate_prep == "loseq_replicate_2", "loseq", replicate_prep))
+```
+
+```{r, fig.height=10, fig.width=12}
+my.formula <- y~x
+
+# p <- c("illumina", "loseq", "smartseq")
+# names(p) <- c("illumina", "loseq2", "smartseq") # facet_grid(labeller = labeller(.rows = p))
+
+med_tpms_long %>% 
+  ggplot(aes(x = log(loseq_replicate_1), y = log(replicate_expr), color = replicate_prep)) +
+  geom_point(alpha = 0.2) +
+  facet_grid(replicate_prep~tissue) +
+  geom_smooth(method  = "lm", se = FALSE, color = "black", formula = my.formula, na.rm = TRUE) +
+  ggpubr::stat_cor(aes(label = ..r.label..), label.x = -4.5, label.y = 8, na.rm = TRUE) +
+  ggtitle("Correlation in expression across library preparations") +
+  xlab("log(Median TPMs) Loseq Replicate 1") +
+  ylab("log(Median TPMs) Replicate 2") +
+  theme(legend.position = "none") +
+  scale_colour_manual(name = "prep", values = prep_colors, drop = TRUE) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12, color = "grey30"),
+                  legend.title = element_text(size = 13),
+        #axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1),
+                  legend.text = element_text(size = 12)) +
+  coord_fixed()
+
+#ggsave(file = paste0(fig_path, "med_tpm_corr_across_preps_tis.png"), width = 14, height = 9)
+#ggsave(file = paste0(fig_path, "med_tpm_corr_across_preps_tis.pdf"), width = 14, height = 9, useDingbats = FALSE)
+ggsave(file = paste0(fig_path, "med_tpm_corr_across_preps_tis.pdf"), width = 10, height = 10, useDingbats = FALSE)
+```
+
+
+
+
+
+
+
+

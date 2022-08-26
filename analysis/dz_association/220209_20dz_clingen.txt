@@ -1,0 +1,6 @@
+diseaseId	name	datasourceId	targetId	score
+EFO_0000253	amyotrophic lateral sclerosis	clingen	ENSG00000142168	1
+EFO_0000253	amyotrophic lateral sclerosis	clingen	ENSG00000127824	0.5
+EFO_0000253	amyotrophic lateral sclerosis	clingen	ENSG00000120948	1
+EFO_0000253	amyotrophic lateral sclerosis	clingen	ENSG00000089280	1
+EFO_0000253	amyotrophic lateral sclerosis	clingen	ENSG00000107566	0.01

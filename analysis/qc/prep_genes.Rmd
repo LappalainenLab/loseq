@@ -1,0 +1,207 @@
+---
+title: "Gene overlap across preps"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(data.table)
+library(here)
+library(ComplexUpset)
+```
+
+# Inputs
+
+```{r}
+meta_full_path <- "data/samplekey_508.txt"
+meta_seq_path <- "data/samplekey_485.txt"
+
+cts_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_raw.txt"
+tpms_path <- "data/downsampled_counts/loseq_allpreps_threshold1000000_downsampled1000000_tpms.txt"
+
+out_path <- "analysis/qc/"
+fig_path <- here("analysis/qc/figs/prep_genes_")
+
+tis <- c("buccal", "hair", "hek", "saliva", "urine")
+```
+
+# Functions
+
+```{r}
+source(here("src/base_functions.R"))
+source(here("src/counts_processing_fxns.R"))
+
+fromList <- function (input) {
+  # Same as original fromList()...
+  elements <- unique(unlist(input))
+  data <- unlist(lapply(input, function(x) {
+      x <- as.vector(match(elements, x))
+      }))
+  data[is.na(data)] <- as.integer(0)
+  data[data != 0] <- as.integer(1)
+  data <- data.frame(matrix(data, ncol = length(input), byrow = F))
+  data <- data[which(rowSums(data) != 0), ]
+  names(data) <- names(input)
+  # ... Except now it conserves your original value names!
+  row.names(data) <- elements
+  return(data)
+}
+
+format_upset <- function(med_tpm_df, med_filt = 0, tissue) {
+  
+  med_tis <- med_tpm_df[, str_detect(colnames(med_tpm_df), pattern = tissue)]
+  
+  list_tis <- lapply(colnames(med_tis), function(x) {
+    pass <- med_tis %>% select(x) %>% filter(get(x) > 0)
+    rownames(pass)
+    })
+  
+  names(list_tis) <- colnames(med_tis)
+  names(list_tis) <- gsub(names(list_tis), pattern = paste0("-", tissue), replacement = "")
+  
+  tis_df <- fromList(list_tis)
+  
+  if (ncol(tis_df) < 3) {
+  tis_df$illumina <- rep(0, n = nrow(tis_df))
+  } else {
+  "All preps present."
+  }
+  
+  return(tis_df)
+
+}
+
+plot_upset <- function(tis_df, tissue) {
+  
+  upset(tis_df, 
+        c("smartseq", "loseq", "illumina"), 
+        name='preps', 
+        wrap = TRUE,
+        keep_empty_groups = TRUE,
+        stripes = "white",
+        queries = list(upset_query(set = "loseq", fill = "seagreen"),
+                       upset_query(set = "smartseq", fill = "cadetblue3"),
+                       upset_query(set = "illumina", fill = "coral3")),
+        set_sizes = upset_set_size() + 
+        theme(axis.text.x = element_text(angle=30),
+              plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12, color = "grey30"),
+                  legend.title = element_text(size = 13),
+        #axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1),
+                  legend.text = element_text(size = 12)) +
+        geom_text(aes(label=..count..), hjust=0, stat='count', color = "white"),
+        base_annotations = list('Gene Number' = intersection_size(counts = TRUE, 
+                                                                  text_colors = c(on_background = "black", 
+                                                                                  on_bar = "black"),
+                                                                  mapping=aes(fill='bars_color')) + 
+                                  scale_fill_manual(values = c('bars_color' = as.character(myColors[tissue])), 
+                                                    guide = 'none'))) +
+        theme(plot.background = element_rect(fill='transparent', color=NA)) +
+        ggtitle(paste0(tissue)) +
+        theme(plot.title = element_text(hjust = 0.5))
+}
+```
+
+# Read in data
+
+```{r}
+meta_full <- fread(here(meta_full_path), data.table = FALSE)
+meta_seq <- fread(here(meta_seq_path), data.table = FALSE)
+
+cts <- fread(here(cts_path), data.table = FALSE) %>% column_to_rownames("V1")
+tpms <- fread(here(tpms_path), data.table = FALSE) %>% column_to_rownames("V1")
+
+source(here::here("src/gtex_loseq_colors.R"))
+myColors <- myColors[tis]
+
+meta_seq <- meta_seq %>% filter(group_name %in% colnames(cts))
+```
+
+# Samples lists belonging to each tissue/prep
+
+```{r}
+group_list <- meta_seq %>% 
+  group_by(prep, tissue) %>% 
+  group_split()
+
+names <- meta_seq %>% 
+  group_by(prep, tissue) %>% 
+  group_keys() %>% # creates df with columns prep and tissue
+  unite(col = "group", prep, tissue, sep = "-") %>% # concatenates columns
+  pull(group) # gets character vector of names
+
+names(group_list) <- names
+```
+
+# Calculate median expression per gene/tissue/prep
+
+```{r}
+med_tpms <- data.frame(row.names = rownames(tpms))
+
+for (i in 1:length(group_list)) {
+  
+  samps <- tpms[,colnames(tpms) %in% group_list[[i]]$group_name]
+  
+  med_tpms[,names(group_list[i])] <- rowMedians(as.matrix(samps))
+  
+}
+```
+
+# Plot formatting
+
+```{r}
+tis_inputs <- lapply(tis, function(x) {
+  format_upset(med_tpm_df = med_tpms, med_filt = 0, tissue = x)
+})
+
+names(tis_inputs) <- tis
+```
+
+# Plot upset plots
+
+```{r}
+plots <- list()
+
+for (i in 1:length(tis_inputs)) {
+  plots[[i]] <- plot_upset(tis_df = tis_inputs[[i]], tissue = names(tis_inputs[i]))
+  ggsave(filename = paste0(fig_path, names(tis_inputs[i]), "_upset.png"))
+}
+
+```
+
+```{r}
+all <- plots[[1]] + plots[[2]] + plots[[3]] + plots[[4]] + plots[[5]]
+
+ggsave(all, filename = paste0(fig_path, "all_upset.png"), width = 15, height = 7)
+ggsave(all, filename = paste0(fig_path, "all_upset.pdf"), width = 16, height = 9, useDingbats = FALSE)
+```
+
+```{r}
+all_vertical <- plots[[1]] / plots[[2]] / plots[[3]] / plots[[4]] / plots[[5]]
+
+ggsave(all_vertical, filename = paste0(fig_path, "all_upset_vertical.png"), width = 7, height = 15)
+ggsave(all_vertical, filename = paste0(fig_path, "all_upset_vertical.pdf"), width = 7, height = 15, useDingbats = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+

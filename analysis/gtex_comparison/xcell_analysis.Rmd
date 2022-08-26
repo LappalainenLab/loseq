@@ -1,0 +1,361 @@
+---
+title: "xCell analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, root.dir = here::here())
+
+set.seed(1)
+```
+
+# Libraries
+
+```{r}
+library(tidyverse)
+library(data.table)
+library(here)
+library(patchwork)
+library(matrixStats)
+library(xCell)
+library(pheatmap)
+library(ComplexHeatmap)
+library(grid)
+```
+
+# Inputs
+
+```{r}
+key_path <- here("analysis/gtex_comparison/xcell_formatted/xcell_formatted_loseq_gtex_5e6_key.txt")
+
+tpms_path <- here("analysis/gtex_comparison/xcell_formatted/xcell_formatted_loseq_gtex_5e6_tpms.txt")
+
+out_path <- here("analysis/gtex_comparison/xcell_results/")
+fig_path <- here("analysis/gtex_comparison/figs/xcell_")
+
+loseq_tis <- c("buccal", "hair", "saliva", "urine") # saliva only has a few data points
+rep_tissues <- here("data/gtex/representative_tissues.10.txt")
+
+gedit_res_path <- here("analysis/loseq_celltypes/results/loseq2_5mil_thresh_bluecode_collapsed_cells.txt")
+
+#gtex_tis <- c("Adipose - Subcutaneous", "Artery - Tibial", "Cells - Cultured fibroblasts", "Cells - EBV-transformed lymphocytes", "Esophagus - Mucosa", "Heart - Left Ventricle", "Kidney - Cortex", "Lung", "Muscle - Skeletal", "Skin - Not Sun Exposed (Suprapubic)", "Skin - Sun Exposed (Lower leg)", "Whole Blood")
+```
+
+# Functions
+
+```{r}
+source(here("src/base_functions.R"))
+```
+
+# Data
+
+```{r}
+key <- fread(key_path, data.table = FALSE)
+
+tpms <- fread(tpms_path, data.table = FALSE) %>% column_to_rownames("V1")
+
+gtex_tis <- fread(here(rep_tissues), data.table = FALSE) # add kidney cortex, esophagus, spleen, lung, fibroblasts
+gtex_tis <- c(gtex_tis$SMTSD, "Esophagus - Mucosa", "Kidney - Cortex", "Cells - Cultured fibroblasts", "Lung", "Spleen")
+
+tis <- c(loseq_tis, gtex_tis)
+
+gedit_res <- fread(gedit_res_path, data.table = FALSE)
+
+source(here("src/gtex_loseq_colors.R"))
+```
+
+# Format colors
+
+```{r}
+myColors <- myColors[tis]
+
+# names(myColors) <- stringr::str_to_title(names(myColors))
+# myColors <- myColors[names(myColors) %in% tissues]
+```
+
+# Run xCell - maybe should run this in separate script and submit to cluster
+
+```{r}
+# res <- xCellAnalysis(tpms)
+# 
+# res <- as.data.frame(res)
+```
+
+# Create Inverse Normalized Results
+
+```{r}
+# inv <- apply(res, MARGIN = 1, function(x) {norm <- qnorm((rank(x, na.last = 'keep') - 0.5) / sum(!is.na(x)))})
+# 
+# inv <- as.data.frame(t(inv))
+```
+
+# Write Results to Files
+
+```{r}
+# fwrite(res, file = paste0(out_path, "xcell_results_loseq_gtex75_5e6.txt"), row.names = TRUE, sep = "\t", col.names = TRUE)
+# 
+# fwrite(inv, file = paste0(out_path, "xcell_results_loseq_gtex75_5e6_inverse_norm.txt"), row.names = TRUE, sep = "\t", col.names = TRUE)
+```
+
+```{r}
+res <- fread(here(out_path, "xcell_results_loseq_gtex75_5e6.txt"), data.table = FALSE) %>% column_to_rownames("V1")
+inv <- fread(here(out_path, "xcell_results_loseq_gtex75_5e6_inverse_norm.txt"), data.table = FALSE) %>% column_to_rownames("V1")
+```
+
+# Take the median of the inv norm results per tissue
+
+```{r}
+med_inv <- data.frame(row.names = rownames(inv))
+
+for (i in tis) {
+  
+  tis_samps <- key %>% filter(tissue == i) %>% pull(group_name)
+  
+  med_inv[, i] <- matrixStats::rowMedians(as.matrix(inv[, colnames(inv) %in% tis_samps]))
+  
+}
+```
+
+# Take the median of the results per tissue
+
+```{r}
+med_res <- data.frame(row.names = rownames(res))
+
+for (i in tis) {
+  
+  tis_samps <- key %>% filter(tissue == i) %>% pull(group_name)
+  
+  med_res[, i] <- matrixStats::rowMedians(as.matrix(res[, colnames(res) %in% tis_samps]))
+  
+}
+```
+
+
+# Plot
+
+# Plotting heatmaps
+
+```{r}
+# # filter out "scores" from xCell enrichments
+# scores <- c("ImmuneScore", "StromaScore", "MicroenvironmentScore")
+# 
+# med_res <- med_res[rownames(med_res) %notin% scores,] # this doesn't actually improve the dynamic range at all.
+```
+
+```{r}
+# fix to title case
+colnames(med_res) <- str_to_title(colnames(med_res))
+
+# for heatmap labels
+row_labels <- data.frame(row.names = colnames(med_res), tissue = colnames(med_res)) # for transpose plot
+col_labels <- data.frame(row.names = colnames(med_res), tissue = colnames(med_res))
+
+# for heatmap colors
+myColors2 <- myColors
+names(myColors2) <- str_to_title(names(myColors2))
+h_colors <- list("tissue" = myColors2) # "cell_type" = cell_colors # not including because too much
+```
+
+```{r, fig.height=8, fig.width=18}
+t <- pheatmap(t(log(round(med_res, digits = 2) + 1)),
+         show_rownames = TRUE,
+         show_colnames = TRUE, 
+         annotation_colors = h_colors,
+         annotation_row = row_labels,
+         cluster_rows = TRUE, clustering_distance_rows = "euclidean", cutree_rows = 4,
+         cluster_cols = FALSE,
+         main = "Cell Type Enrichment per Tissue Type",
+         col=colorRampPalette(brewer.pal(9, "Blues"))(length(seq(0,1,0.01))),
+         breaks=seq(0,1,0.01),
+         angle_col = 90,
+         cellwidth = 12,
+         cellheight = 12, 
+         fontsize = 12, annotation_legend = FALSE)
+
+ggsave(plot = t, filename = paste0(fig_path, "med_results_heatmap_transposed.png"), height = 4, width = 9)
+```
+
+```{r, fig.height=6, fig.width=13.5}
+pdf(file = paste0(fig_path, "med_results_heatmap_transposed_complex.pdf"), height = 6, width = 13.5)
+
+Heatmap(t(log(round(med_res, digits = 2) + 1)),
+        col=colorRampPalette(brewer.pal(9, "Blues"))(length(seq(0,1,0.01))),
+        column_title = "Median Cell Type Enrichment per Tissue Type",
+        rect_gp = gpar(col = "white", lwd = 2), 
+        border = "black",
+        cluster_columns = FALSE,
+        row_km = 3,
+        row_km_repeats = 10,
+        clustering_distance_rows = "euclidean",
+        row_names_gp = gpar(col = c(myColors2[c("Buccal", "Hair", "Saliva", "Urine")], rep("black", 15)), fontsize = 12),
+        column_names_gp = gpar(fontsize = 12),
+        heatmap_legend_param = list(title = "Enrichment"))
+
+dev.off()
+
+#ggsave(plot = c, filename = paste0(fig_path, "med_results_heatmap_transposed_complex.png"), height = 4, width = 9)
+```
+
+
+# Plotting individual cell types
+
+```{r}
+xcells <- c("B-cells", "Chondrocytes", "Endothelial cells", "Epithelial cells", "Fibroblasts", "Macrophages", "Melanocytes", "Monocytes", "MSC", "Smooth muscle", "Neutrophils", "NK cells", "Osteoblast")
+```
+
+```{r}
+xcell_subset <- as.data.frame(t(res[xcells,]))
+
+xcell_subset <- xcell_subset %>% rownames_to_column("group_name") %>% left_join(., key)
+
+xcell_subset <- xcell_subset %>% 
+  pivot_longer(cols = `B-cells`:Osteoblast, names_to = "cell_types", values_to = "enrichment")
+```
+
+
+```{r, fig.height=12, fig.width=15}
+c <- xcell_subset %>% 
+  filter(tissue %in% tis) %>% 
+  #group_by(cell_types) %>% 
+  #arrange(tissue, enrichment, .by_group = TRUE) %>% View()
+  ggplot(aes(x = tidytext::reorder_within(tissue, enrichment, cell_types), y = enrichment, fill = tissue)) +
+  geom_boxplot(outlier.shape = NA) +
+  theme_bw() +
+  theme(legend.position = "none",
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1)) +
+  xlab("") +
+  ylab("Cell Type Enrichment") +
+  scale_fill_manual(values = myColors) +
+  coord_flip() +
+  facet_wrap(~cell_types, scales = "free", ncol = 3) +
+  tidytext::scale_x_reordered() +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid = element_blank())
+
+ggsave(plot = c, filename = paste0(fig_path, "boxplots_select_xcell_enrichements.png"), height = 23, width = 17)
+ggsave(plot = c, filename = paste0(fig_path, "boxplots_select_xcell_enrichements.pdf"), height = 23, width = 17, useDingbats = FALSE)
+```
+
+
+# xCell and GEDIT correlation for select overlapping cell types
+
+```{r}
+#"B-cells", "Endothelial cells", "Epithelial cells", "Fibroblasts", "Macrophages", "Melanocytes", "Monocytes", "Smooth muscle", "Neutrophils")
+
+gedit_res <- gedit_res %>% 
+  pivot_longer(cols = Chondrocyte:Myocyte, names_to = "cell_types", values_to = "gedit_proportion") %>% 
+  mutate(cell_types = case_when(
+    cell_types == "B.cell" ~ "B-cells",
+    cell_types == "Chondrocyte" ~ "Chondrocytes",
+    cell_types == "Endothelial" ~ "Endothelial cells",
+    cell_types == "Epithelial" ~ "Epithelial cells",
+    cell_types == "Fibroblast" ~ "Fibroblasts",
+    cell_types == "Macrophage" ~ "Macrophages",
+    cell_types == "Monocyte" ~ "Monocytes",
+    cell_types == "MSC" ~ "MSC",
+    cell_types == "Myocyte" ~ "Smooth muscle",
+    cell_types == "Fibroblast" ~ "Fibroblasts",
+    cell_types == "neutrophil" ~ "Neutrophils",
+    cell_types == "NK.cell" ~ "NK cells",
+    cell_types == "Melanocyte" ~ "Melanocytes",
+    cell_types == "Osteoblast" ~ "Osteoblast"
+  )) %>% 
+  filter(cell_types %in% xcells)
+```
+
+```{r}
+corr_df <- merge(xcell_subset, gedit_res, by = c("group_name", "cell_types"))
+```
+
+```{r}
+corr_df %>% 
+  ggplot(aes(x = enrichment, y = gedit_proportion, color = tissue)) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  facet_grid(tissue~cell_types, scales = "free") +
+  xlab("xCell Enrichment") +
+  ylab("GEDIT proportion") +
+  theme_bw() +
+  scale_color_manual(values = myColors[loseq_tis]) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.3))
+
+ggsave(filename = paste0(fig_path, "xcell_gedit_corr_split.png"), height = 6, width = 13.5)
+```
+
+
+
+
+
+
+```{r}
+# library(ggpmisc)
+
+# dat <- corr_df %>% select(enrichment, gedit_proportion)
+
+corr_df %>% 
+  ggplot(aes(x = enrichment, y = gedit_proportion, color = tissue)) +
+  geom_point(alpha = 0.8, size = 1) +
+  #geom_smooth(method = "lm", color = "black", size = 0.5, se = FALSE) +
+  # stat_poly_line(data = dat, aes(x = enrichment, y = gedit_proportion)) +
+  # stat_poly_eq(data = dat, aes(x = enrichment, y = gedit_proportion)) +
+  facet_wrap(~cell_types) + #, scales = "free_x"
+  xlab("xCell Enrichment") +
+  ylab("GEDIT proportion") +
+  theme_bw() +
+  scale_color_manual(values = myColors[loseq_tis]) +
+  theme(plot.title = element_text(size = 14),
+                  plot.subtitle = element_text(size = 13),
+                  axis.title = element_text(size = 13),
+                  axis.title.y = element_text(vjust = 2),
+                  axis.title.x = element_text(vjust = -0.75),
+                  axis.text = element_text(size = 12),
+        axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1),
+                  strip.text = element_text(size = 12),
+                  legend.title = element_text(size = 13),
+                  legend.text = element_text(size = 12),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(size = 0.3))
+
+ggsave(filename = paste0(fig_path, "xcell_gedit_corr.pdf"), height = 8, width = 10, useDingbats = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
